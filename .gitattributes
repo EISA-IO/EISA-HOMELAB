@@ -1,0 +1,14 @@
+# Force CRLF on Windows batch files — cmd.exe parses byte-by-byte and
+# choking on LF-only files manifests as commands losing their first 1-2
+# characters at runtime ('echo' -> 'ho', ':MAIN' -> 'MAIN', etc.). This
+# applies regardless of the user's global core.autocrlf setting.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell scripts run via -File and don't depend on a specific EOL,
+# but Windows-native tools generally prefer CRLF. Pin them too.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+
+# Everything else: let git auto-detect text vs binary.
+* text=auto
