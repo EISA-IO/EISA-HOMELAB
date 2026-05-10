@@ -47,6 +47,12 @@ http://tool.${DOMAIN} {
 
 http://tor.${DOMAIN} {
 	import forward_auth
+	# Bare / -> auto-login URL so the kasm web client receives credentials
+	# in query params and skips the login form. WebSocket / API paths
+	# (/websockify, /api/, /static/, /vnc.html) pass through unchanged
+	# because @root only matches an exact "/".
+	@root path /
+	redir @root /vnc.html?username=kasm_user&password=${TOR_VNC_PW}&autoconnect=true&resize=remote 302
 	reverse_proxy https://host.docker.internal:6901 {
 		transport http {
 			tls_insecure_skip_verify

@@ -103,8 +103,16 @@ your media on `STORAGE_DISK` are never touched.
 | n8n              | <http://localhost:5678>    | Workflow automation |
 | Qdrant           | <http://localhost:6333>    | Vector DB (used by n8n) |
 | Portainer        | <http://localhost:9000>    | Container management |
-| Tor Browser      | <https://localhost:6901>   | Anonymous browsing (KasmVNC) |
+| Tor Browser      | auto-login URL below       | Anonymous browsing (KasmVNC) — skips the kasm login form |
 | Omni Tools       | <http://localhost:8890>    | Misc utilities |
+
+**Tor Browser auto-login** — Caddy redirects bare `/` to a URL that
+passes the kasm credentials in query params, so the login form
+auto-submits and you land in the desktop:
+
+- Local: `https://localhost:6901/vnc.html?username=kasm_user&password=<TOR_VNC_PW>&autoconnect=true&resize=remote`
+  (the wizard prints the exact URL with your password substituted)
+- Tunnel: `https://tor.<your-domain>/` — same effect via Caddy redirect.
 
 In tunnel mode each service is also reachable behind Authelia at e.g.
 `https://chat.example.com`, `https://hub.example.com`, etc. — the
@@ -195,9 +203,12 @@ templates are tracked.
   `configuration.yml` / `settings.yml` files are gitignored. Do not commit
   them — they contain tunnel tokens, JWT secrets, encryption keys, and
   password hashes.
-- The `tor-browser` service ships with default credentials
-  (`kasm_user / password`). Change `VNC_PW` in `docker-compose.yml` (or
-  add it to `.env`) before exposing it on tunnel mode.
+- The `tor-browser` container's password comes from `TOR_VNC_PW` in
+  `.env` (the wizard generates a random one on first run). The same
+  password is baked into the Caddy redirect that auto-logs you in, so
+  you never have to type it. If you publish `tor.${DOMAIN}` over the
+  tunnel, the Authelia rule (`group: admins`) is what actually keeps it
+  private — anyone with the link still hits SSO before kasm.
 - In tunnel mode every protected route requires a valid Authelia session
   (group `admins` by default). Only `auth.${DOMAIN}` and `c.${DOMAIN}`
   bypass auth — review `configuration.yml.tmpl` if you change the routing.

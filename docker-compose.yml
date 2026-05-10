@@ -352,16 +352,21 @@ services:
 
   # ========================
   # TOR BROWSER (in-browser anonymous browsing)
-  # User: kasm_user / Password: see VNC_PW
-  # Visit: https://localhost:6901
+  # User: kasm_user (fixed by upstream image) / Password: TOR_VNC_PW from .env
+  # Auto-login URL (skips the login form entirely):
+  #   https://localhost:6901/?username=kasm_user&password=${TOR_VNC_PW}&autoconnect=true&resize=remote
+  # In tunnel mode Caddy rewrites bare / -> the auto-login URL automatically,
+  # so https://tor.${DOMAIN}/ logs you straight into the desktop.
   # ========================
   tor-browser:
+    env_file: .env
     image: kasmweb/tor-browser:1.17.0
+    container_name: tor-browser
     shm_size: 512m
     ports:
       - "6901:6901"
     environment:
-      - VNC_PW=password
+      - VNC_PW=${TOR_VNC_PW}
     volumes:
       - ${STORAGE_DISK}/${DOWNLOADS_LOCATION}:/home/kasm-user/Downloads
     networks:

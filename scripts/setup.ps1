@@ -238,7 +238,10 @@ function Invoke-Wizard {
         @{ Key='HERMES_DASHBOARD_TOKEN';           Bytes=32; Mode='hex' },
         @{ Key='NEXTAUTH_SECRET';                  Bytes=32; Mode='b64' },
         @{ Key='LINKWARDEN_DB_PASSWORD';           Bytes=20; Mode='hex' },
-        @{ Key='DB_PASSWORD';                      Bytes=20; Mode='hex' }
+        @{ Key='DB_PASSWORD';                      Bytes=20; Mode='hex' },
+        # Tor browser (KasmVNC) — never seen by the user, only baked into
+        # the auto-login URL Caddy redirects to and the container's VNC_PW.
+        @{ Key='TOR_VNC_PW';                       Bytes=12; Mode='hex' }
     )
     foreach ($s in $genSpecs) {
         if ($Reconfigure -or (Test-Placeholder $envMap[$s.Key])) {
@@ -281,8 +284,9 @@ function Resolve-Template {
 }
 
 function Write-LocalOnlyCaddyfile {
-    param([string]$OutputPath)
-    $content = @'
+    param([string]$OutputPath, $Env)
+    $torPw = [string]$Env['TOR_VNC_PW']
+    $content = @"
 # =============================================================================
 # Caddy reverse proxy — LOCAL-ONLY MODE
 # DOMAIN was left empty in .env, so no public-facing virtual hosts are
@@ -299,7 +303,8 @@ function Write-LocalOnlyCaddyfile {
 #   http://localhost:8031   SearXNG
 #   http://localhost:5678   n8n
 #   http://localhost:9000   Portainer
-#   https://localhost:6901  Tor Browser (kasm_user / password)
+#   Tor Browser auto-login (skips the kasm login form):
+#     https://localhost:6901/vnc.html?username=kasm_user&password=$torPw&autoconnect=true&resize=remote
 # =============================================================================
 
 {
@@ -308,9 +313,9 @@ function Write-LocalOnlyCaddyfile {
 }
 
 :80 {
-    respond "EISA Homelab — local-only mode. See Caddyfile for service ports." 200
+    respond "EISA Homelab - local-only mode. See Caddyfile for service ports." 200
 }
-'@
+"@
     Set-Content -Path $OutputPath -Value $content -Encoding UTF8
     Write-Ok "Wrote local-only Caddyfile -> $OutputPath"
 }
@@ -338,7 +343,7 @@ function Render-Templates {
     $renderEnv['AUTHELIA_STORAGE_ENCRYPTION_KEY']= $state.AUTHELIA_STORAGE_ENCRYPTION_KEY
 
     if ([string]::IsNullOrWhiteSpace($Env['DOMAIN'])) {
-        Write-LocalOnlyCaddyfile (Join-Path $ProjectRoot 'persistent-storage\caddy\Caddyfile')
+        Write-LocalOnlyCaddyfile -OutputPath (Join-Path $ProjectRoot 'persistent-storage\caddy\Caddyfile') -Env $renderEnv
     } else {
         Resolve-Template `
             (Join-Path $ProjectRoot 'persistent-storage\caddy\Caddyfile.tmpl') `
@@ -406,7 +411,9 @@ function Show-Summary {
     Write-Info '  SearXNG    http://localhost:8031'
     Write-Info '  n8n        http://localhost:5678'
     Write-Info '  Portainer  http://localhost:9000'
-    Write-Info '  Tor Browser https://localhost:6901  (kasm_user / password — change VNC_PW!)'
+    $torPw = [string]$Env['TOR_VNC_PW']
+    Write-Info '  Tor Browser (auto-login, skips the kasm form):'
+    Write-Info "    https://localhost:6901/vnc.html?username=kasm_user&password=$torPw&autoconnect=true&resize=remote"
 }
 
 # --- run ---------------------------------------------------------------
