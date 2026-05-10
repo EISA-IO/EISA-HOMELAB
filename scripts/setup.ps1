@@ -341,6 +341,11 @@ function Render-Templates {
     $renderEnv['SEARXNG_SECRET_KEY']             = $state.SEARXNG_SECRET_KEY
     $renderEnv['AUTHELIA_JWT_SECRET']            = $state.AUTHELIA_JWT_SECRET
     $renderEnv['AUTHELIA_STORAGE_ENCRYPTION_KEY']= $state.AUTHELIA_STORAGE_ENCRYPTION_KEY
+    # Pre-compute the kasm basic-auth header value so the Caddy redirect
+    # for tor.${DOMAIN} can inject Authorization on proxied requests
+    # (kasm's /vnc.html is HTTP-basic-auth gated).
+    $torCred = "kasm_user:" + [string]$Env['TOR_VNC_PW']
+    $renderEnv['TOR_BASIC_AUTH'] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($torCred))
 
     if ([string]::IsNullOrWhiteSpace($Env['DOMAIN'])) {
         Write-LocalOnlyCaddyfile -OutputPath (Join-Path $ProjectRoot 'persistent-storage\caddy\Caddyfile') -Env $renderEnv
