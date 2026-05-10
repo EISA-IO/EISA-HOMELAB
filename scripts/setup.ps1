@@ -285,13 +285,13 @@ function Resolve-Template {
 
 function Write-LocalOnlyCaddyfile {
     param([string]$OutputPath, $Env)
-    $torPw = [string]$Env['TOR_VNC_PW']
+    $torPw   = [string]$Env['TOR_VNC_PW']
+    $torAuth = [string]$Env['TOR_BASIC_AUTH']
     $content = @"
 # =============================================================================
 # Caddy reverse proxy — LOCAL-ONLY MODE
-# DOMAIN was left empty in .env, so no public-facing virtual hosts are
-# rendered. Caddy here just serves a tiny landing page on :80 explaining
-# how to reach the services directly. Hit each service on its host:port:
+# DOMAIN was left empty in .env, so no public *.${DOMAIN} hosts are
+# rendered. Direct service URLs (still work):
 #
 #   http://localhost:8080   Heimdall (start page)
 #   http://localhost:9091   Authelia (only useful in tunnel mode)
@@ -303,8 +303,9 @@ function Write-LocalOnlyCaddyfile {
 #   http://localhost:8031   SearXNG
 #   http://localhost:5678   n8n
 #   http://localhost:9000   Portainer
-#   Tor Browser auto-login (skips the kasm login form):
-#     https://localhost:6901/vnc.html?username=kasm_user&password=$torPw&autoconnect=true&resize=remote
+#
+# Special: http://tor.localhost/  --  zero-click Tor browser (no kasm prompt).
+# *.localhost resolves to 127.0.0.1 automatically on Windows 10+, macOS, Linux.
 # =============================================================================
 
 {
@@ -312,8 +313,19 @@ function Write-LocalOnlyCaddyfile {
     http_port 80
 }
 
+http://tor.localhost {
+    @root path /
+    redir @root /vnc.html?username=kasm_user&password=$torPw&autoconnect=true&resize=remote 302
+    reverse_proxy https://host.docker.internal:6901 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+        header_up Authorization "Basic $torAuth"
+    }
+}
+
 :80 {
-    respond "EISA Homelab - local-only mode. See Caddyfile for service ports." 200
+    respond "EISA Homelab - local-only mode. Open http://tor.localhost/ for the Tor browser; see Caddyfile for other services." 200
 }
 "@
     Set-Content -Path $OutputPath -Value $content -Encoding UTF8
@@ -416,9 +428,8 @@ function Show-Summary {
     Write-Info '  SearXNG    http://localhost:8031'
     Write-Info '  n8n        http://localhost:5678'
     Write-Info '  Portainer  http://localhost:9000'
-    $torPw = [string]$Env['TOR_VNC_PW']
-    Write-Info '  Tor Browser (auto-login, skips the kasm form):'
-    Write-Info "    https://localhost:6901/vnc.html?username=kasm_user&password=$torPw&autoconnect=true&resize=remote"
+    Write-Info '  Tor Browser (zero-click auto-login):'
+    Write-Info '    http://tor.localhost/'
 }
 
 # --- run ---------------------------------------------------------------

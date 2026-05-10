@@ -103,16 +103,20 @@ your media on `STORAGE_DISK` are never touched.
 | n8n              | <http://localhost:5678>    | Workflow automation |
 | Qdrant           | <http://localhost:6333>    | Vector DB (used by n8n) |
 | Portainer        | <http://localhost:9000>    | Container management |
-| Tor Browser      | auto-login URL below       | Anonymous browsing (KasmVNC) — skips the kasm login form |
+| Tor Browser      | <http://tor.localhost/>    | Zero-click auto-login through Caddy (no kasm prompt). Direct kasm at <https://localhost:6901> still works but asks for the basic-auth password. |
 | Omni Tools       | <http://localhost:8890>    | Misc utilities |
 
-**Tor Browser auto-login** — Caddy redirects bare `/` to a URL that
-passes the kasm credentials in query params, so the login form
-auto-submits and you land in the desktop:
+**Tor Browser auto-login** — Caddy injects the kasm basic-auth header on
+proxied requests AND redirects bare `/` to the auto-connect URL, so the
+kasm login form never appears:
 
-- Local: `https://localhost:6901/vnc.html?username=kasm_user&password=<TOR_VNC_PW>&autoconnect=true&resize=remote`
-  (the wizard prints the exact URL with your password substituted)
-- Tunnel: `https://tor.<your-domain>/` — same effect via Caddy redirect.
+- **Local**: `http://tor.localhost/` — `*.localhost` resolves to 127.0.0.1
+  on Windows 10+, macOS, and Linux without any hosts-file edits.
+- **Tunnel**: `https://tor.<your-domain>/` — same chain, gated by Authelia
+  SSO first.
+
+Hitting `https://localhost:6901/` directly still works but bypasses Caddy,
+so kasm shows its native basic-auth prompt — use `tor.localhost` instead.
 
 In tunnel mode each service is also reachable behind Authelia at e.g.
 `https://chat.example.com`, `https://hub.example.com`, etc. — the

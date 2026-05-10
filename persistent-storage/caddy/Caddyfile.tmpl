@@ -45,16 +45,15 @@ http://tool.${DOMAIN} {
 	reverse_proxy host.docker.internal:8890
 }
 
-http://tor.${DOMAIN} {
-	import forward_auth
-	# Auto-login flow:
-	#   1. Bare / 302s to /vnc.html?...&autoconnect=true so kasm's JS
-	#      auto-connects to the desktop without any clicks.
-	#   2. header_up Authorization injects HTTP basic-auth on every
-	#      proxied request, which is what gates /vnc.html. Without this,
-	#      the browser would still get a kasm login prompt.
-	# The wizard substitutes ${TOR_BASIC_AUTH} at template-render time
-	# from base64(kasm_user:${TOR_VNC_PW}).
+# Tor / KasmVNC auto-login snippet — used by both the public tor.${DOMAIN}
+# vhost (behind Authelia) and the local-only http://tor.localhost vhost.
+#   1. Bare / 302s to /vnc.html?...&autoconnect=true so kasm's JS
+#      auto-connects to the desktop without any clicks.
+#   2. header_up Authorization injects HTTP basic-auth on every proxied
+#      request, which is what gates /vnc.html. Without this the browser
+#      would still get a kasm login prompt.
+# The wizard substitutes ${TOR_VNC_PW} + ${TOR_BASIC_AUTH} at render time.
+(tor_autologin) {
 	@root path /
 	redir @root /vnc.html?username=kasm_user&password=${TOR_VNC_PW}&autoconnect=true&resize=remote 302
 	reverse_proxy https://host.docker.internal:6901 {
@@ -63,6 +62,19 @@ http://tor.${DOMAIN} {
 		}
 		header_up Authorization "Basic ${TOR_BASIC_AUTH}"
 	}
+}
+
+http://tor.${DOMAIN} {
+	import forward_auth
+	import tor_autologin
+}
+
+# Local-only zero-click bookmark. *.localhost resolves to 127.0.0.1 on
+# Windows 10+, macOS, and Linux without any hosts-file edits, so opening
+# http://tor.localhost/ in any browser on this machine lands directly in
+# the Tor desktop with no Authelia, no kasm prompt, no form.
+http://tor.localhost {
+	import tor_autologin
 }
 
 http://search.${DOMAIN} {
