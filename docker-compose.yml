@@ -1,0 +1,385 @@
+services:
+  #######################  CLOUDFLARED  #######################
+  # Only runs if CLOUDFLARE_TUNNEL_TOKEN is set in .env.
+  # In local-only mode the wizard sets the token to a no-op value and you
+  # can remove this block, or just ignore the container's restart loop.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: always
+    env_file: .env
+    command: tunnel --no-autoupdate --protocol auto --retries 5 run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - caddy
+    profiles:
+      - tunnel
+
+  #######################  HEIMDALL  #######################
+  heimdall:
+    env_file: .env
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall-media
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Riyadh
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/heimdall/config:/config
+    ports:
+      - "8080:80"
+    restart: always
+    networks:
+      - caddy
+
+  ##########  CADDY  ##########
+  caddy:
+    image: caddy:latest
+    container_name: Caddy
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "80:80"
+    volumes:
+      - ${PERSISTENT_STORAGE}/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ${PERSISTENT_STORAGE}/caddy/site:/srv
+      - ${PERSISTENT_STORAGE}/caddy/caddy_data:/data
+      - ${PERSISTENT_STORAGE}/caddy/caddy_config:/config
+    depends_on:
+      authelia:
+        condition: service_healthy
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+    networks:
+      - caddy
+
+  ##########  AUTHELIA  ##########
+  authelia:
+    image: authelia/authelia:latest
+    container_name: Authelia
+    volumes:
+      - ${PERSISTENT_STORAGE}/authelia:/config
+      - ${PERSISTENT_STORAGE}/authelia/assets:/assets
+      - ${PERSISTENT_STORAGE}/authelia/assets:/config/overrides
+    ports:
+      - "9091:9091"
+    restart: always
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9091/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - caddy
+
+  ##########  NAVIDROME — Stream Music  ##########
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    user: 1000:1000
+    ports:
+      - "4533:4533"
+    restart: always
+    environment:
+      - TZ=Asia/Riyadh
+    volumes:
+      - ${PERSISTENT_STORAGE}/navidrome:/data
+      - ${STORAGE_DISK}/${AUDIO_LOCATION}/music:/music:ro
+    networks:
+      - caddy
+
+  ##########  JELLYFIN — Stream Movies & TV Shows  ##########
+  jellyfin:
+    env_file:
+      - .env
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    ports:
+      - 9014:8096
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Riyadh
+    volumes:
+      - ${PERSISTENT_STORAGE}/jellyfin/library:/config
+      - ${STORAGE_DISK}/${PLEX_LOCATION}:/plex
+      - /tmp/jellyfin-transcode:/transcode
+      - jellyfin_cache:/cache
+    restart: always
+    networks:
+      - caddy
+
+  ##########  FILE BROWSER  ##########
+  filebrowser:
+    env_file:
+      - .env
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    volumes:
+      - ${STORAGE_DISK}/${DOWNLOADS_LOCATION}:/srv/downloads
+      - ${STORAGE_DISK}/${SOFTWARE_LOCATION}:/srv/software
+      - ${STORAGE_DISK}/${GAMES_LOCATION}:/srv/games
+      - ${STORAGE_DISK}/${VIDEOS_LOCATION}:/srv/videos
+      - ${STORAGE_DISK}/${AUDIO_LOCATION}:/srv/audio
+      - ${STORAGE_DISK}/${PICTURES_LOCATION}:/srv/pictures
+      - ${STORAGE_DISK}/${DOCUMENTS_LOCATION}:/srv/documents
+      - ${STORAGE_DISK}/${PLEX_LOCATION}:/srv/plex
+      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/filebrowser.db:/database/filebrowser.db
+      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/settings.json:/config/settings.json
+      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/storage:/srv
+      - filebrowser_database:/database
+      - filebrowser_config:/config
+    environment:
+      - PUID=1000
+      - PGID=1000
+    ports:
+      - 8095:80
+    restart: always
+    networks:
+      - caddy
+
+  #######################  OMNI-TOOLS  #######################
+  omni-tools:
+    image: iib0011/omni-tools:latest
+    container_name: omni-tools
+    restart: unless-stopped
+    ports:
+      - "8890:80"
+    networks:
+      - caddy
+
+  # ========================
+  # N8N (Workflow automation platform)
+  # ========================
+  n8n-postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+    volumes:
+      - ${PERSISTENT_STORAGE}/n8n/postgres_storage:/var/lib/postgresql/data
+    networks:
+      - caddy
+    restart: always
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    image: n8nio/n8n:2.15.0
+    env_file: .env
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=n8n-postgres
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_ENCRYPTION_KEY
+      - N8N_USER_MANAGEMENT_JWT_SECRET
+    container_name: n8n
+    ports:
+      - 5678:5678
+    volumes:
+      - ${PERSISTENT_STORAGE}/n8n/n8n_storage:/home/node/.n8n
+      - ${PERSISTENT_STORAGE}/n8n/backup:/backup
+      - ${PERSISTENT_STORAGE}/n8n/shared:/data/shared
+    networks:
+      - caddy
+    restart: always
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - 6333:6333
+    volumes:
+      - ${PERSISTENT_STORAGE}/n8n/qdrant_storage:/qdrant/storage
+    networks:
+      - caddy
+    restart: always
+
+  # ========================
+  # OLLAMA (LLM BACKEND)
+  # ========================
+  ollama:
+    env_file: .env
+    image: ollama/ollama:0.23.2
+    container_name: ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - 11434:11434
+    tty: true
+    restart: always
+    networks:
+      - caddy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: ${OLLAMA_GPU_DRIVER-nvidia}
+              count: 1
+              capabilities: ["gpu"]
+
+  # ========================
+  # OPEN WEB UI (LLM FRONTEND)
+  # ========================
+  open-webui:
+    env_file: .env
+    image: ghcr.io/open-webui/open-webui:0.9.2
+    container_name: open-webui
+    volumes:
+      - open-webui:/app/backend/data
+    depends_on:
+      - ollama
+    ports:
+      - ${OPEN_WEBUI_PORT-9002}:8080
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      ENABLE_RAG_WEB_SEARCH: "True"
+      RAG_WEB_SEARCH_ENGINE: searxng
+      RAG_WEB_SEARCH_RESULT_COUNT: 3
+      RAG_WEB_SEARCH_CONCURRENT_REQUESTS: 10
+      SEARXNG_QUERY_URL: http://searxng:8080/search?q=<query>
+    restart: always
+    networks:
+      - caddy
+
+  #######################  SEARXNG  #######################
+  searxng:
+    env_file: .env
+    container_name: searxng
+    image: docker.io/searxng/searxng:latest
+    restart: always
+    ports:
+      - "8031:8080"
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/searxng:/etc/searxng
+      - searxng_cache:/var/cache/searxng
+    networks:
+      - caddy
+
+  # ========================
+  # LOCAL DEEP RESEARCH — AI research assistant
+  # ========================
+  local-deep-research:
+    image: localdeepresearch/local-deep-research:latest
+    container_name: local-deep-research
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - LDR_WEB_HOST=0.0.0.0
+      - LDR_WEB_PORT=5000
+      - LDR_DATA_DIR=/data
+      - LDR_LLM_OLLAMA_URL=http://ollama:11434
+      - LDR_SEARCH_ENGINE_WEB_SEARXNG_DEFAULT_PARAMS_INSTANCE_URL=http://searxng:8080
+    volumes:
+      - ldr_data:/data
+      - ldr_scripts:/scripts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+    depends_on:
+      - ollama
+      - searxng
+    networks:
+      - caddy
+
+  # ========================
+  # VANE — privacy-focused AI answering engine
+  # ========================
+  vane:
+    image: itzcrazykns1337/vane:slim-latest
+    container_name: vane
+    environment:
+      SEARXNG_API_URL: http://searxng:8080
+    ports:
+      - "3000:3000"
+    volumes:
+      - vane_data:/home/vane/data
+    depends_on:
+      - searxng
+      - ollama
+    restart: always
+    networks:
+      - caddy
+
+  ##########  PORTAINER  ##########
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: Portainer
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${PERSISTENT_STORAGE}/portainer:/data
+    ports:
+      - "9000:9000"
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+    networks:
+      - caddy
+
+  # ========================
+  # TOR BROWSER (in-browser anonymous browsing)
+  # User: kasm_user / Password: see VNC_PW
+  # Visit: https://localhost:6901
+  # ========================
+  tor-browser:
+    image: kasmweb/tor-browser:1.17.0
+    shm_size: 512m
+    ports:
+      - "6901:6901"
+    environment:
+      - VNC_PW=password
+    volumes:
+      - ${STORAGE_DISK}/${DOWNLOADS_LOCATION}:/home/kasm-user/Downloads
+    networks:
+      - caddy
+    restart: always
+
+volumes:
+  ollama:
+  open-webui:
+  jellyfin_cache:
+  filebrowser_database:
+  filebrowser_config:
+  searxng_cache:
+  ldr_data:
+  ldr_scripts:
+  vane_data:
+
+networks:
+  caddy:
+    driver: bridge
+    name: caddy

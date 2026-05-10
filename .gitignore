@@ -1,0 +1,56 @@
+# =============================================================================
+# Secrets — NEVER commit
+# =============================================================================
+.env
+.env.local
+.env.*.local
+.wizard-state.json
+
+# Rendered configs (templates with .tmpl are committed; resolved files are not).
+persistent-storage/caddy/Caddyfile
+persistent-storage/authelia/configuration.yml
+persistent-storage/do-not-delete/searxng/settings.yml
+
+# Real users database (only the .example template is committed).
+persistent-storage/authelia/users_database.yml
+
+# =============================================================================
+# Runtime data — bind-mounts that fill up at runtime
+# =============================================================================
+persistent-storage/caddy/caddy_data/
+persistent-storage/caddy/caddy_config/
+persistent-storage/caddy/site/
+persistent-storage/caddy/Caddyfile.bak.*
+
+persistent-storage/authelia/db.sqlite3
+persistent-storage/authelia/notification.txt
+persistent-storage/authelia/assets/
+persistent-storage/authelia/overrides/
+
+persistent-storage/jellyfin/
+persistent-storage/navidrome/
+persistent-storage/portainer/
+persistent-storage/n8n/
+persistent-storage/do-not-delete/heimdall/
+persistent-storage/do-not-delete/filebrowser/filebrowser.db
+persistent-storage/do-not-delete/filebrowser/storage/
+persistent-storage/do-not-delete/tor/
+
+# SearXNG state files we don't want to ship.
+persistent-storage/do-not-delete/searxng/*.new
+
+# =============================================================================
+# Editor / OS / tooling junk
+# =============================================================================
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/

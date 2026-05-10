@@ -1,0 +1,149 @@
+# =============================================================================
+# Caddy reverse proxy — EISA HOMELAB ULTIMATE
+# Layout & routing mirror authelia/configuration.yml. Keep them in sync.
+#
+# ${DOMAIN} is substituted at startup by RUN.bat (PowerShell template render).
+# Set DOMAIN= empty for local-only mode and Caddy will not be reached from
+# the internet; you'll hit services directly by host:port instead.
+# =============================================================================
+
+{
+	email     admin@${DOMAIN}
+	auto_https off
+	http_port 80
+}
+
+# -----------------------------------------------------------------------------
+# Forward-auth snippet — every protected route imports this.
+# -----------------------------------------------------------------------------
+(forward_auth) {
+	forward_auth Authelia:9091 {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+		header_up X-Forwarded-Proto https
+	}
+}
+
+# =============================================================================
+# BYPASS — no Authelia (matches: bypass rules in configuration.yml)
+# =============================================================================
+
+http://auth.${DOMAIN} {
+	reverse_proxy Authelia:9091
+}
+
+http://c.${DOMAIN} {
+	reverse_proxy immich_stash_server:2283
+}
+
+# =============================================================================
+# TOOLS
+# =============================================================================
+
+http://tool.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:8890
+}
+
+http://tor.${DOMAIN} {
+	import forward_auth
+	reverse_proxy https://host.docker.internal:6901 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+http://search.${DOMAIN} {
+	import forward_auth
+	reverse_proxy searxng:8080
+}
+
+# =============================================================================
+# INFRASTRUCTURE
+# =============================================================================
+
+http://portainer.${DOMAIN} {
+	import forward_auth
+	reverse_proxy Portainer:9000
+}
+
+http://hub.${DOMAIN} {
+	import forward_auth
+	reverse_proxy heimdall-media:80
+}
+
+# =============================================================================
+# AI IMAGES
+# =============================================================================
+
+http://flux.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:9020
+}
+
+http://pony.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:9021
+}
+
+# =============================================================================
+# AI AUDIO
+# =============================================================================
+
+http://voice.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:7861
+}
+
+# =============================================================================
+# AI AGENTS / CHAT
+# =============================================================================
+
+http://chat.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:9002
+}
+
+http://hermes.${DOMAIN} {
+	import forward_auth
+	reverse_proxy hermes-workspace:3000
+}
+
+http://n8n.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:5678
+}
+
+# =============================================================================
+# MEDIA
+# =============================================================================
+
+http://music.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:4533
+}
+
+http://movie.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:9014
+}
+
+http://file.${DOMAIN} {
+	import forward_auth
+	reverse_proxy host.docker.internal:8095
+}
+
+# =============================================================================
+# STASH
+# =============================================================================
+
+http://manga.${DOMAIN} {
+	import forward_auth
+	reverse_proxy kavita-stash:5000
+}
+
+http://cookies.${DOMAIN} {
+	import forward_auth
+	reverse_proxy immich_stash_server:2283
+}

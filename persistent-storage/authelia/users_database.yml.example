@@ -1,0 +1,24 @@
+###############################################################
+#                         Users Database                      #
+#                                                             #
+#  Copy this file to users_database.yml (no .example) and     #
+#  edit. Generate password hashes with:                       #
+#                                                             #
+#    docker run --rm authelia/authelia:latest \               #
+#      authelia crypto hash generate argon2 --password 'XXXX' #
+#                                                             #
+#  RUN.bat will copy this template into place automatically   #
+#  on first run if no users_database.yml exists yet.          #
+###############################################################
+
+users:
+  admin:
+    disabled: false
+    displayname: "Administrator"
+    # Replace this hash with the output of the docker command above.
+    # The placeholder below is NOT a valid hash — Authelia will refuse
+    # to start until you replace it.
+    password: "__ARGON2_HASH_REPLACE_ME__"
+    email: admin@example.com
+    groups:
+      - admins
