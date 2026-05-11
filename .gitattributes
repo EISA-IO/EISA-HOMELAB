@@ -10,5 +10,10 @@
 *.ps1 text eol=crlf
 *.psm1 text eol=crlf
 
+# macOS .command launchers and POSIX shell scripts MUST be LF — the shebang
+# breaks if there's a stray CR.
+*.command text eol=lf
+*.sh      text eol=lf
+
 # Everything else: let git auto-detect text vs binary.
 * text=auto

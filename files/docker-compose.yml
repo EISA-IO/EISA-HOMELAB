@@ -1,3 +1,5 @@
+name: eisa-homelab
+
 services:
   #######################  CLOUDFLARED  #######################
   # Only runs if CLOUDFLARE_TUNNEL_TOKEN is set in .env.
@@ -88,9 +90,10 @@ services:
       - TZ=Asia/Riyadh
     volumes:
       - ${PERSISTENT_STORAGE}/navidrome:/data
-      - ${STORAGE_DISK}/${AUDIO_LOCATION}/music:/music:ro
+      - ${MUSIC_PATH:-F:/Music}:/music:ro
     networks:
       - caddy
+    profiles: [media]
 
   ##########  JELLYFIN — Stream Movies & TV Shows  ##########
   jellyfin:
@@ -106,12 +109,14 @@ services:
       - TZ=Asia/Riyadh
     volumes:
       - ${PERSISTENT_STORAGE}/jellyfin/library:/config
-      - ${STORAGE_DISK}/${PLEX_LOCATION}:/plex
+      - ${MOVIES_PATH:-F:/Movies}:/media/movies
+      - ${TV_SHOWS_PATH:-F:/TV-Shows}:/media/tv
       - /tmp/jellyfin-transcode:/transcode
       - jellyfin_cache:/cache
     restart: always
     networks:
       - caddy
+    profiles: [media]
 
   ##########  FILE BROWSER  ##########
   filebrowser:
@@ -120,19 +125,20 @@ services:
     image: filebrowser/filebrowser:latest
     container_name: filebrowser
     volumes:
-      - ${STORAGE_DISK}/${DOWNLOADS_LOCATION}:/srv/downloads
-      - ${STORAGE_DISK}/${SOFTWARE_LOCATION}:/srv/software
-      - ${STORAGE_DISK}/${GAMES_LOCATION}:/srv/games
-      - ${STORAGE_DISK}/${VIDEOS_LOCATION}:/srv/videos
-      - ${STORAGE_DISK}/${AUDIO_LOCATION}:/srv/audio
-      - ${STORAGE_DISK}/${PICTURES_LOCATION}:/srv/pictures
-      - ${STORAGE_DISK}/${DOCUMENTS_LOCATION}:/srv/documents
-      - ${STORAGE_DISK}/${PLEX_LOCATION}:/srv/plex
-      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/filebrowser.db:/database/filebrowser.db
-      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/settings.json:/config/settings.json
-      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/storage:/srv
+      - ${MOVIES_PATH:-F:/Movies}:/srv/movies
+      - ${TV_SHOWS_PATH:-F:/TV-Shows}:/srv/tv-shows
+      - ${MUSIC_PATH:-F:/Music}:/srv/music
+      - ${DOWNLOADS_PATH:-F:/Downloads}:/srv/downloads
+      # /database and /config live in named docker volumes so we don't
+      # rely on bind-mounted files existing on the host (which Docker
+      # on Windows auto-creates as empty directories - that breaks the
+      # sqlite db open with "is a directory").
       - filebrowser_database:/database
       - filebrowser_config:/config
+      # settings.json is bind-mounted read-only on top of the /config volume
+      # so users can edit filebrowser config from the host. The file is
+      # tracked in git and always exists.
+      - ${PERSISTENT_STORAGE}/do-not-delete/filebrowser/settings.json:/config/settings.json:ro
     environment:
       - PUID=1000
       - PGID=1000
@@ -141,6 +147,7 @@ services:
     restart: always
     networks:
       - caddy
+    profiles: [media]
 
   #######################  OMNI-TOOLS  #######################
   omni-tools:
@@ -151,6 +158,7 @@ services:
       - "8890:80"
     networks:
       - caddy
+    profiles: [media]
 
   # ========================
   # N8N (Workflow automation platform)
@@ -171,6 +179,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    profiles: [ai]
 
   n8n:
     image: n8nio/n8n:2.15.0
@@ -197,6 +206,7 @@ services:
     depends_on:
       n8n-postgres:
         condition: service_healthy
+    profiles: [ai]
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -208,6 +218,7 @@ services:
     networks:
       - caddy
     restart: always
+    profiles: [ai]
 
   # ========================
   # OLLAMA (LLM BACKEND)
@@ -233,6 +244,7 @@ services:
             - driver: ${OLLAMA_GPU_DRIVER-nvidia}
               count: 1
               capabilities: ["gpu"]
+    profiles: [ai]
 
   # ========================
   # OPEN WEB UI (LLM FRONTEND)
@@ -257,6 +269,7 @@ services:
     restart: always
     networks:
       - caddy
+    profiles: [ai]
 
   #######################  SEARXNG  #######################
   searxng:
@@ -271,6 +284,7 @@ services:
       - searxng_cache:/var/cache/searxng
     networks:
       - caddy
+    profiles: [ai]
 
   # ========================
   # LOCAL DEEP RESEARCH — AI research assistant
@@ -311,6 +325,7 @@ services:
       - searxng
     networks:
       - caddy
+    profiles: [ai]
 
   # ========================
   # VANE — privacy-focused AI answering engine
@@ -330,6 +345,7 @@ services:
     restart: always
     networks:
       - caddy
+    profiles: [ai]
 
   ##########  PORTAINER  ##########
   portainer:
@@ -368,10 +384,11 @@ services:
     environment:
       - VNC_PW=${TOR_VNC_PW}
     volumes:
-      - ${STORAGE_DISK}/${DOWNLOADS_LOCATION}:/home/kasm-user/Downloads
+      - ${DOWNLOADS_PATH:-F:/Downloads}:/home/kasm-user/Downloads
     networks:
       - caddy
     restart: always
+    profiles: [media]
 
 volumes:
   ollama:

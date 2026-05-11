@@ -1,0 +1,11 @@
+LOW|huihui_ai/qwen3-vl-abliterated:4b-instruct-q4_K_M
+LOW|huihui_ai/qwen3-vl-abliterated:8b-instruct-q4_K_M
+LOW|carstenuhlig/omnicoder-2-9b:q4_k_m
+LOW|huihui_ai/gemma-4-abliterated:e4b-q4_K
+LOW|fluffy/l3-8b-stheno-v3.2:q4_K_M
+
+HIGH|huihui_ai/gemma-4-abliterated:e4b-q8_0
+HIGH|huihui_ai/qwen3-vl-abliterated:8b-instruct-q8_0
+HIGH|fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4
+HIGH|iaprofesseur/SuperGemma4-26b-uncensored-Q4
+HIGH|VladimirGav/gemma4-26b-16GB-VRAM-Uncensored:latest

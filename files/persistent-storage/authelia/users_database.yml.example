@@ -7,7 +7,7 @@
 #    docker run --rm authelia/authelia:latest \               #
 #      authelia crypto hash generate argon2 --password 'XXXX' #
 #                                                             #
-#  RUN.bat will copy this template into place automatically   #
+#  the first-run wizard will copy this into place for you     #
 #  on first run if no users_database.yml exists yet.          #
 ###############################################################
 
