@@ -183,6 +183,70 @@ function Ask-Choice {
     }
 }
 
+# Multi-pick service picker for the CUSTOM stack option. Each entry has a
+# friendly label + the underlying docker compose service name(s) it represents
+# (so 'Immich' expands to its 4 sidecars). Returns the flat list of service
+# names to pass to `docker compose up`.
+function Invoke-CustomServicePicker {
+    $entries = @(
+        # AI
+        [pscustomobject]@{ Label='ollama               (local LLMs - the brain)';                  Services=@('ollama') }
+        [pscustomobject]@{ Label='open-webui           (ChatGPT-style chat interface for the AI)'; Services=@('open-webui') }
+        [pscustomobject]@{ Label='searxng              (private metasearch engine)';               Services=@('searxng') }
+        [pscustomobject]@{ Label='local-deep-research  (AI research assistant)';                   Services=@('local-deep-research') }
+        [pscustomobject]@{ Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
+        [pscustomobject]@{ Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
+        # MEDIA
+        [pscustomobject]@{ Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
+        [pscustomobject]@{ Label='navidrome            (music streaming)';                         Services=@('navidrome') }
+        [pscustomobject]@{ Label='immich               (photo + video library; bundles DB/Redis/ML)'; Services=@('immich-server','immich-machine-learning','immich-redis','immich-postgres') }
+        # PRODUCTIVITY
+        [pscustomobject]@{ Label='filebrowser          (web file manager)';                        Services=@('filebrowser') }
+        [pscustomobject]@{ Label='omni-tools           (grab-bag of web utilities)';               Services=@('omni-tools') }
+        [pscustomobject]@{ Label='tor-browser          (Tor Browser in a browser tab)';            Services=@('tor-browser') }
+    )
+
+    G ''
+    G  '  CUSTOM stack - pick the apps you want.'
+    Dim '  Type comma- or space-separated numbers (e.g. "1,3,7" or "1 3 7"),'
+    Dim '  "all" to pick everything, or "ai" / "media" / "prod" for shortcut bundles.'
+    G ''
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        G ("    [{0}] {1}" -f ($i + 1), $entries[$i].Label)
+    }
+    G ''
+    Write-Host '  > ' -NoNewline -ForegroundColor Green
+    $raw = Read-Host
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+
+    $picked = @()
+    $lower  = $raw.Trim().ToLower()
+    if ($lower -eq 'all') {
+        $picked = 1..$entries.Count
+    } elseif ($lower -eq 'ai') {
+        $picked = 1..6
+    } elseif ($lower -eq 'media') {
+        $picked = 7..9
+    } elseif ($lower -in @('prod','productivity')) {
+        $picked = 10..12
+    } else {
+        # Split on commas, spaces, or both; keep numeric tokens only.
+        $tokens = $raw -split '[,\s]+' | Where-Object { $_ -match '^[0-9]+$' }
+        foreach ($t in $tokens) {
+            $n = [int]$t
+            if ($n -ge 1 -and $n -le $entries.Count -and ($picked -notcontains $n)) {
+                $picked += $n
+            }
+        }
+    }
+
+    $services = @()
+    foreach ($p in $picked) {
+        $services += $entries[$p - 1].Services
+    }
+    return ($services | Select-Object -Unique)
+}
+
 # ---------------------------------------------------------------------------
 # Docker preflight — detect OS, status, and auto-install if missing.
 # ---------------------------------------------------------------------------
@@ -476,43 +540,78 @@ function Invoke-Wizard {
     G ''
     $stackPick = Ask-Choice @(
         [pscustomobject]@{
-            Label = 'AI STACK ONLY'
+            Label = 'AI'
             Hint  = @(
                 'ollama              local LLMs'
                 'open-webui          chat interface'
                 'searxng             private search'
                 'local-deep-research AI research'
                 'vane                answer engine'
-                'n8n                 workflow automation'
-                'n8n-postgres        n8n database'
+                'n8n + postgres      workflow automation'
                 'qdrant              vector database'
             )
         }
         [pscustomobject]@{
-            Label = 'MEDIA & PRODUCTIVITY'
+            Label = 'MEDIA (streaming only)'
             Hint  = @(
-                'jellyfin    movie streaming'
-                'navidrome   music streaming'
-                'filebrowser file manager'
-                'omni-tools  web utilities'
-                'tor-browser anonymous browser'
+                'jellyfin            movie + TV streaming'
+                'navidrome           music streaming'
+                'immich              photo + video library'
             )
         }
         [pscustomobject]@{
-            Label = 'ULTIMATE (recommended)'
+            Label = 'PRODUCTIVITY (utilities only)'
             Hint  = @(
-                'Everything in [1] + [2] above.'
+                'filebrowser         file manager'
+                'omni-tools          web utilities'
+                'tor-browser         anonymous browser'
+            )
+        }
+        [pscustomobject]@{
+            Label = 'ULTIMATE (everything - recommended)'
+            Hint  = @(
+                'Everything from AI + MEDIA + PRODUCTIVITY.'
+            )
+        }
+        [pscustomobject]@{
+            Label = 'CUSTOM (pick individual apps)'
+            Hint  = @(
+                'Show a checklist of every app and let me choose exactly'
+                'which ones to start.'
             )
         }
     )
-    $stack = switch ($stackPick) { 1 { 'ai' } 2 { 'media' } 3 { 'ultimate' } }
-    $profiles = switch ($stack) {
-        'ai'       { @('ai') }
-        'media'    { @('media') }
-        'ultimate' { @('ai','media') }
+
+    $customServices = @()
+    $profiles       = @()
+    $stack          = switch ($stackPick) {
+        1 { 'ai' }
+        2 { 'media' }
+        3 { 'productivity' }
+        4 { 'ultimate' }
+        5 { 'custom' }
     }
-    $hasAi    = $profiles -contains 'ai'
-    $hasMedia = $profiles -contains 'media'
+    switch ($stack) {
+        'ai'           { $profiles = @('ai') }
+        'media'        { $profiles = @('media-stream') }
+        'productivity' { $profiles = @('productivity') }
+        'ultimate'     { $profiles = @('ai','media') }
+        'custom'       {
+            $customServices = Invoke-CustomServicePicker
+            if (-not $customServices -or $customServices.Count -eq 0) {
+                Dim '  No apps picked - defaulting to ULTIMATE.'
+                $stack    = 'ultimate'
+                $profiles = @('ai','media')
+                $customServices = @()
+            }
+        }
+    }
+
+    # Compatibility flags surfaced in the summary / state blob.
+    $hasAi    = ($profiles -contains 'ai') -or `
+                ($customServices | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','n8n','n8n-postgres','qdrant' }).Count -gt 0
+    $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity') -or `
+                ($customServices | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser' }).Count -gt 0
     Ok "Stack: $($stack.ToUpper())"
 
     # ---- Step 2: access mode ---------------------------------------------
@@ -714,13 +813,14 @@ function Invoke-Wizard {
     Write-EnvFile $EnvFile $envMap
 
     return [pscustomobject]@{
-        Env       = $envMap
-        Stack     = $stack
-        Profiles  = $profiles
-        UseTunnel = $useTunnel
-        HasAi     = $hasAi
-        HasMedia  = $hasMedia
-        GpuMode   = $gpuMode
+        Env             = $envMap
+        Stack           = $stack
+        Profiles        = $profiles
+        CustomServices  = $customServices
+        UseTunnel       = $useTunnel
+        HasAi           = $hasAi
+        HasMedia        = $hasMedia
+        GpuMode         = $gpuMode
     }
 }
 
@@ -972,6 +1072,7 @@ function New-StateBlob {
         AUTHELIA_JWT_SECRET             = ''
         AUTHELIA_STORAGE_ENCRYPTION_KEY = ''
         profiles                        = @('ai','media')
+        customServices                  = @()
         useTunnel                       = $false
         gpuMode                         = 'cpu'
         configured                      = $true
@@ -985,10 +1086,9 @@ function Start-Stack {
     param(
         [string[]]$Profiles,
         [bool]$UseTunnel,
-        [string]$GpuMode = 'cpu'   # 'cpu' | 'nvidia' | 'amd' | 'native' (Mac, Metal)
+        [string]$GpuMode = 'cpu',  # 'cpu' | 'nvidia' | 'amd' | 'native' (Mac, Metal)
+        [string[]]$CustomServices = @()
     )
-    $effective = @($Profiles)
-    if ($UseTunnel) { $effective += 'tunnel' }
 
     $arglist = @('compose', '-f', 'docker-compose.yml')
     switch ($GpuMode) {
@@ -996,8 +1096,24 @@ function Start-Stack {
         'amd'    { $arglist += @('-f', 'docker-compose.amd.yml') }
         'native' { $arglist += @('-f', 'docker-compose.ollama-native.yml') }
     }
-    foreach ($p in $effective) { $arglist += @('--profile', $p) }
-    $arglist += @('up','-d')
+
+    if ($CustomServices -and $CustomServices.Count -gt 0) {
+        # CUSTOM mode: pass explicit service names positionally to `up`.
+        # We bypass --profile and instead list the chosen services plus
+        # the always-on core (which has no profile but doesn't auto-start
+        # when other services are listed positionally).
+        $coreServices = @('caddy','authelia','heimdall','portainer')
+        $services = @($CustomServices) + $coreServices
+        if ($UseTunnel) { $services += 'cloudflared' }
+        # De-dup while preserving order.
+        $services = $services | Select-Object -Unique
+        $arglist += @('up','-d') + $services
+    } else {
+        $effective = @($Profiles)
+        if ($UseTunnel) { $effective += 'tunnel' }
+        foreach ($p in $effective) { $arglist += @('--profile', $p) }
+        $arglist += @('up','-d')
+    }
 
     G ''
     Dim ("  docker " + ($arglist -join ' '))
@@ -1396,13 +1512,15 @@ if ($StartOnly) {
 
     # 4. Load / synth state blob.
     $stateBlob = if ($state) { $state } else { New-StateBlob }
-    foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','useTunnel','gpuMode','configured')) {
+    foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','customServices','useTunnel','gpuMode','configured')) {
         if (-not $stateBlob.PSObject.Properties[$k]) {
             $stateBlob | Add-Member -NotePropertyName $k -NotePropertyValue $null
         }
     }
     if (-not $stateBlob.profiles -or $stateBlob.profiles.Count -eq 0) {
-        $stateBlob.profiles = @('ai','media')
+        if (-not $stateBlob.customServices -or $stateBlob.customServices.Count -eq 0) {
+            $stateBlob.profiles = @('ai','media')
+        }
     }
     # Auto-detect tunnel: only enable if the user supplied a real token.
     $stateBlob.useTunnel = -not (Test-Placeholder $envMap['CLOUDFLARE_TUNNEL_TOKEN'])
@@ -1427,12 +1545,18 @@ if ($StartOnly) {
 
     # 8. Start.
     $profiles  = @($stateBlob.profiles)
+    $customSvc = @($stateBlob.customServices)
     $useTunnel = [bool]$stateBlob.useTunnel
     $gpuMode   = [string]$stateBlob.gpuMode
-    $hasAi     = $profiles -contains 'ai'
-    $hasMedia  = $profiles -contains 'media'
+    if ($customSvc -and $customSvc.Count -gt 0) {
+        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','n8n' }).Count -gt 0
+        $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser' }).Count -gt 0
+    } else {
+        $hasAi    = $profiles -contains 'ai'
+        $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity')
+    }
 
-    Start-Stack -Profiles $profiles -UseTunnel $useTunnel -GpuMode $gpuMode
+    Start-Stack -Profiles $profiles -UseTunnel $useTunnel -GpuMode $gpuMode -CustomServices $customSvc
 
     if ($hasAi -and (Get-OllamaModelCount) -eq 0) {
         Install-FirstLlm
@@ -1461,20 +1585,22 @@ $stateBlob = if ($state) { $state } else {
         AUTHELIA_JWT_SECRET            = ''
         AUTHELIA_STORAGE_ENCRYPTION_KEY = ''
         profiles                       = @()
+        customServices                 = @()
         useTunnel                      = $false
         gpuMode                        = 'cpu'
         configured                     = $false
     }
 }
-foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','useTunnel','gpuMode','configured')) {
+foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','customServices','useTunnel','gpuMode','configured')) {
     if (-not $stateBlob.PSObject.Properties[$k]) {
         $stateBlob | Add-Member -NotePropertyName $k -NotePropertyValue $null
     }
 }
-$stateBlob.profiles   = $result.Profiles
-$stateBlob.useTunnel  = $result.UseTunnel
-$stateBlob.gpuMode    = $result.GpuMode
-$stateBlob.configured = $true
+$stateBlob.profiles       = $result.Profiles
+$stateBlob.customServices = $result.CustomServices
+$stateBlob.useTunnel      = $result.UseTunnel
+$stateBlob.gpuMode        = $result.GpuMode
+$stateBlob.configured     = $true
 
 Repair-BindPaths
 Render-Templates -Env $result.Env -StateBlob $stateBlob
@@ -1482,7 +1608,7 @@ Ensure-AutheliaUser -EnvMap $result.Env
 Write-State -State $stateBlob
 
 if (-not $NoStart) {
-    Start-Stack -Profiles $result.Profiles -UseTunnel $result.UseTunnel -GpuMode $result.GpuMode
+    Start-Stack -Profiles $result.Profiles -UseTunnel $result.UseTunnel -GpuMode $result.GpuMode -CustomServices $result.CustomServices
 }
 
 if (-not $NoStart -and $result.HasAi) {

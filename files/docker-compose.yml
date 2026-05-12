@@ -93,7 +93,7 @@ services:
       - ${MUSIC_PATH:-F:/Music}:/music:ro
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, media-stream]
 
   ##########  JELLYFIN — Stream Movies & TV Shows  ##########
   jellyfin:
@@ -116,7 +116,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, media-stream]
 
   ##########  FILE BROWSER  ##########
   filebrowser:
@@ -147,7 +147,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, productivity]
 
   #######################  OMNI-TOOLS  #######################
   omni-tools:
@@ -158,7 +158,7 @@ services:
       - "8890:80"
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, productivity]
 
   # ========================
   # N8N (Workflow automation platform)
@@ -386,7 +386,7 @@ services:
     networks:
       - caddy
     restart: always
-    profiles: [media]
+    profiles: [media, productivity]
 
   # ========================
   # IMMICH (self-hosted photo + video library, like Google Photos)
@@ -421,7 +421,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, media-stream]
 
   immich-machine-learning:
     image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
@@ -432,7 +432,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, media-stream]
 
   immich-redis:
     image: docker.io/valkey/valkey:9
@@ -445,7 +445,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, media-stream]
 
   immich-postgres:
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
@@ -467,7 +467,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media]
+    profiles: [media, media-stream]
 
 volumes:
   ollama:
