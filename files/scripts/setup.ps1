@@ -582,24 +582,29 @@ function Invoke-Wizard {
             $pathHint = 'Type the full path to each folder. Examples: ~/Movies, /Volumes/Media/Movies'
             # If the defaults still look Windows-y, swap to sensible Mac defaults.
             $homePath = $HOME
-            foreach ($k in @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH')) {
-                if ($envMap[$k] -match '^[A-Za-z]:') {
+            foreach ($k in @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH','PHOTOS_PATH')) {
+                if (-not $envMap.Contains($k) -or $envMap[$k] -match '^[A-Za-z]:') {
                     $envMap[$k] = switch ($k) {
                         'MOVIES_PATH'    { "$homePath/Movies" }
                         'TV_SHOWS_PATH'  { "$homePath/TV-Shows" }
                         'MUSIC_PATH'     { "$homePath/Music" }
                         'DOWNLOADS_PATH' { "$homePath/Downloads" }
+                        'PHOTOS_PATH'    { "$homePath/Photos" }
                     }
                 }
             }
         } else {
             $pathHint = 'Type the full path to each folder. Examples: F:\Movies, D:\TV-Shows, F:/Music'
         }
+        if (-not $envMap.Contains('PHOTOS_PATH') -or [string]::IsNullOrWhiteSpace($envMap['PHOTOS_PATH'])) {
+            $envMap['PHOTOS_PATH'] = 'F:/Photos'
+        }
         Step 'Step 3 — Your media folders' $pathHint
         $envMap['MOVIES_PATH']    = Format-Path (Ask 'MOVIES FOLDER LOCATION'    $envMap['MOVIES_PATH'])
         $envMap['TV_SHOWS_PATH']  = Format-Path (Ask 'TV SHOWS FOLDER LOCATION'  $envMap['TV_SHOWS_PATH'])
         $envMap['MUSIC_PATH']     = Format-Path (Ask 'MUSIC FOLDER LOCATION'     $envMap['MUSIC_PATH'])
         $envMap['DOWNLOADS_PATH'] = Format-Path (Ask 'DOWNLOADS FOLDER LOCATION' $envMap['DOWNLOADS_PATH'])
+        $envMap['PHOTOS_PATH']    = Format-Path (Ask 'PHOTOS FOLDER LOCATION (Immich library)' $envMap['PHOTOS_PATH'])
         Ok 'Media folders saved.'
     }
 
@@ -1140,6 +1145,7 @@ function Show-Summary {
         Dim '  MEDIA & PRODUCTIVITY'
         G '    Jellyfin (movies/TV)    http://localhost:9014'
         G '    Navidrome (music)       http://localhost:4533'
+        G '    Immich (photos/videos)  http://localhost:2283'
         G '    Filebrowser             http://localhost:8095'
         G '    Omni Tools              http://localhost:8890'
         G '    Tor Browser (auto-login) http://tor.localhost/'
@@ -1163,6 +1169,7 @@ function Show-Summary {
         if ($Result.HasMedia) {
             G "    Jellyfin   https://movie.$d"
             G "    Navidrome  https://music.$d"
+            G "    Immich     https://photos.$d"
             G "    Files      https://file.$d"
         }
         if ($Result.HasAi) {
@@ -1193,6 +1200,7 @@ function Show-Summary {
         if ($Result.HasMedia) {
             Dim "    movie.$d       ->  HTTP  caddy:80   Jellyfin"
             Dim "    music.$d       ->  HTTP  caddy:80   Navidrome"
+            Dim "    photos.$d      ->  HTTP  caddy:80   Immich"
             Dim "    file.$d        ->  HTTP  caddy:80   Filebrowser"
             Dim "    tor.$d         ->  HTTP  caddy:80   Tor Browser (SSO)"
             Dim "    tool.$d        ->  HTTP  caddy:80   Omni Tools"

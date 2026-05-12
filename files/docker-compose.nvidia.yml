@@ -1,5 +1,5 @@
 # =============================================================================
-# Compose override - NVIDIA GPU acceleration for Ollama
+# Compose override - NVIDIA GPU acceleration for the EISA Homelab stack.
 #
 # Applied automatically by setup.ps1 when the wizard's GPU detection picks
 # 'nvidia' (or when state.gpuMode == 'nvidia').
@@ -8,12 +8,44 @@
 #   - Windows / WSL2: latest NVIDIA driver + Docker Desktop "Enable GPU support"
 #   - Linux:          NVIDIA Container Toolkit (`apt install nvidia-container-toolkit`)
 #
+# Layers GPU on:
+#   - ollama                  : CUDA inference
+#   - immich-server           : NVENC for ffmpeg video transcoding
+#   - immich-machine-learning : switches image to :release-cuda for CUDA-accelerated
+#                               face / object / clip-text inference
+#
 # To test manually:
 #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml \
-#     --profile ai up -d ollama
+#     --profile ai --profile media up -d
 # =============================================================================
 services:
   ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
+
+  # Immich video transcoding (NVENC). Capabilities 'gpu, compute, video' are
+  # required for the NVENC encoder to be exposed in the container.
+  immich-server:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+                - compute
+                - video
+
+  # Immich ML inference (CUDA). The image swap pulls the CUDA-enabled build
+  # of immich-machine-learning so face detection / clip / search use the GPU.
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}-cuda
     deploy:
       resources:
         reservations:

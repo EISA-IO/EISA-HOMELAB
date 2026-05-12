@@ -1,20 +1,24 @@
 # =============================================================================
-# Compose override - AMD ROCm GPU acceleration for Ollama  (Linux only)
+# Compose override - AMD ROCm + VAAPI acceleration for the EISA Homelab stack.
+# Linux only.
 #
 # Applied automatically by setup.ps1 when the wizard's GPU detection picks
-# 'amd' (or when state.gpuMode == 'amd'). This:
-#   - Swaps the image to Ollama's ROCm build  (ollama/ollama:rocm)
-#   - Mounts /dev/kfd + /dev/dri so the container can talk to the GPU
-#   - Adds the container's user to the 'video' group
+# 'amd' (or when state.gpuMode == 'amd').
 #
 # Requirements on the host:
 #   - Linux with AMD ROCm-compatible GPU + ROCm drivers installed
 #   - Docker engine on Linux (NOT Docker Desktop on Windows; AMD passthrough
 #     on Windows is not supported by Docker Desktop at this time).
 #
+# Layers GPU on:
+#   - ollama                  : ROCm image + /dev/kfd + /dev/dri
+#   - immich-server           : VAAPI (/dev/dri) for ffmpeg video transcoding
+#   - immich-machine-learning : switches image to :release-rocm for ROCm-accelerated
+#                               face / object / clip-text inference
+#
 # To test manually:
 #   docker compose -f docker-compose.yml -f docker-compose.amd.yml \
-#     --profile ai up -d ollama
+#     --profile ai --profile media up -d
 # =============================================================================
 services:
   ollama:
@@ -22,5 +26,23 @@ services:
     devices:
       - /dev/kfd
       - /dev/dri
+    group_add:
+      - video
+
+  # Immich video transcoding via VAAPI on Linux. /dev/dri exposes the render
+  # node; libva inside the container picks the right driver automatically
+  # (radeonsi for AMD, iHD for newer Intel).
+  immich-server:
+    devices:
+      - /dev/dri:/dev/dri
+
+  # Immich ML inference (ROCm). The image swap pulls the ROCm-enabled build
+  # of immich-machine-learning. Container needs /dev/kfd + /dev/dri and the
+  # 'video' group to talk to the GPU.
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}-rocm
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
     group_add:
       - video

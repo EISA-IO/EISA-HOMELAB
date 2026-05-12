@@ -9,11 +9,11 @@
 >
 > Created by **Ahmed Al-EISA**.
 
-A one-machine homelab stack: media (Jellyfin / Navidrome), files (Filebrowser),
-local AI (Ollama + Open WebUI + SearXNG + Local Deep Research + Vane), workflow
-automation (n8n + Postgres + Qdrant), reverse proxy (Caddy), SSO
-(Authelia), tunnel (Cloudflared), Tor browser, Portainer, and Heimdall as the
-landing page.
+A one-machine homelab stack: media (Jellyfin / Navidrome / Immich), files
+(Filebrowser), local AI (Ollama + Open WebUI + SearXNG + Local Deep Research +
+Vane), workflow automation (n8n + Postgres + Qdrant), reverse proxy (Caddy),
+SSO (Authelia), tunnel (Cloudflared), Tor browser, Portainer, and Heimdall as
+the landing page.
 
 ### Why it's private
 
@@ -160,6 +160,7 @@ If you ever want to wipe docker volumes or prune dangling images, run
 | Caddy            | <http://localhost:80>      | Reverse proxy (tunnel mode only) |
 | Jellyfin         | <http://localhost:9014>    | Movies & TV |
 | Navidrome        | <http://localhost:4533>    | Music streaming |
+| Immich           | <http://localhost:2283>    | Photo + video library (with face/object recognition; HW-accelerated transcoding + ML when GPU is detected) |
 | Filebrowser      | <http://localhost:8095>    | File manager |
 | Open WebUI       | <http://localhost:9002>    | LLM frontend |
 | Ollama API       | <http://localhost:11434>   | LLM backend |
