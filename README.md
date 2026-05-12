@@ -183,6 +183,12 @@ Skip to the section that matches what you want to do.
   Like a one-person research team that works overnight.
 - ❓ **Vane** — a "Perplexity-style" answer engine. Type a question, get a
   short answer with sources. Faster than chat for one-shot lookups.
+- 🪽 **Hermes** — NousResearch's self-improving agent. Talks to Ollama for
+  its brain (OmniCoder 2 by default), keeps a persistent memory across
+  sessions, learns and creates its own skills. Comes paired with the
+  **Hermes Workspace** web UI (chat, memory browser, terminal, skills
+  manager, multi-agent swarm view). Login is gated by
+  `HERMES_WORKSPACE_PASSWORD`, auto-generated and saved to `.env`.
 - 🔗 **n8n** — a drag-and-drop automation builder. You wire up blocks
   ("when an email arrives → save the attachment → ask the AI to
   summarise it → text me the result") into workflows that run on a
@@ -237,6 +243,8 @@ Skip to the section that matches what you want to do.
 | SearXNG          | <http://localhost:8031>    | Metasearch (private) |
 | Local Deep Research | <http://localhost:5000> | AI research assistant |
 | Vane             | <http://localhost:3000>    | AI answer engine |
+| Hermes Workspace | <http://localhost:3030>    | Web UI for the Hermes self-improving agent |
+| Hermes Gateway   | <http://localhost:8642>    | Hermes agent HTTP API |
 | n8n              | <http://localhost:5678>    | Workflow automation |
 | Portainer        | <http://localhost:9000>    | Container management |
 | Tor Browser      | <http://tor.localhost/>    | Zero-click auto-login through Caddy (no kasm prompt). Direct kasm at <https://localhost:6901> still works but asks for the basic-auth password. |

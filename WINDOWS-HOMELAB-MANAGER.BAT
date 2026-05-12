@@ -163,7 +163,7 @@ docker compose down --remove-orphans
 echo         ----------------------------------------------------------------
 echo.
 
-set "EISA=cloudflared heimdall-media Caddy Authelia navidrome jellyfin filebrowser omni-tools n8n qdrant ollama open-webui searxng local-deep-research vane Portainer tor-browser immich-server immich-machine-learning immich-redis immich-postgres"
+set "EISA=cloudflared heimdall-media Caddy Authelia navidrome jellyfin filebrowser omni-tools n8n qdrant ollama open-webui searxng local-deep-research vane Portainer tor-browser immich-server immich-machine-learning immich-redis immich-postgres hermes-agent hermes-workspace"
 
 echo   [2/3] Stopping any leftover containers by name...
 for %%N in (%EISA%) do (

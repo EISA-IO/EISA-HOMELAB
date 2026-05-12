@@ -195,6 +195,7 @@ function Invoke-CustomServicePicker {
         [pscustomobject]@{ Label='searxng              (private metasearch engine)';               Services=@('searxng') }
         [pscustomobject]@{ Label='local-deep-research  (AI research assistant)';                   Services=@('local-deep-research') }
         [pscustomobject]@{ Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
+        [pscustomobject]@{ Label='hermes               (NousResearch self-improving agent + workspace UI)'; Services=@('hermes-agent','hermes-workspace') }
         [pscustomobject]@{ Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
         # MEDIA
         [pscustomobject]@{ Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
@@ -224,11 +225,11 @@ function Invoke-CustomServicePicker {
     if ($lower -eq 'all') {
         $picked = 1..$entries.Count
     } elseif ($lower -eq 'ai') {
-        $picked = 1..6
+        $picked = 1..7
     } elseif ($lower -eq 'media') {
-        $picked = 7..9
+        $picked = 8..10
     } elseif ($lower -in @('prod','productivity')) {
-        $picked = 10..12
+        $picked = 11..13
     } else {
         # Split on commas, spaces, or both; keep numeric tokens only.
         $tokens = $raw -split '[,\s]+' | Where-Object { $_ -match '^[0-9]+$' }
@@ -547,6 +548,8 @@ function Invoke-Wizard {
                 'searxng             private search'
                 'local-deep-research AI research'
                 'vane                answer engine'
+                'hermes-agent        self-improving agent'
+                'hermes-workspace    web UI for hermes-agent'
                 'n8n + postgres      workflow automation'
                 'qdrant              vector database'
             )
@@ -609,7 +612,7 @@ function Invoke-Wizard {
 
     # Compatibility flags surfaced in the summary / state blob.
     $hasAi    = ($profiles -contains 'ai') -or `
-                ($customServices | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','n8n','n8n-postgres','qdrant' }).Count -gt 0
+                ($customServices | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-workspace','n8n','n8n-postgres','qdrant' }).Count -gt 0
     $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity') -or `
                 ($customServices | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser' }).Count -gt 0
     Ok "Stack: $($stack.ToUpper())"
@@ -1375,8 +1378,9 @@ function Show-Summary {
         G '    SearXNG (search)        http://localhost:8031'
         G '    Local Deep Research     http://localhost:5000'
         G '    Vane                    http://localhost:3000'
+        G '    Hermes Workspace        http://localhost:3030'
+        G '    Hermes Gateway (API)    http://localhost:8642'
         G '    n8n (workflows)         http://localhost:5678'
-        G '    Qdrant (vector DB)      http://localhost:6333'
     }
     if ($Result.UseTunnel -and $Result.Env['DOMAIN']) {
         $d = $Result.Env['DOMAIN']
@@ -1393,6 +1397,7 @@ function Show-Summary {
             G "    Open WebUI https://chat.$d"
             G "    SearXNG    https://search.$d"
             G "    n8n        https://n8n.$d"
+            G "    Hermes     https://hermes.$d"
         }
         G ''
         Dim '  ============================================================'
@@ -1426,6 +1431,7 @@ function Show-Summary {
             Dim "    chat.$d        ->  HTTP  caddy:80   Open WebUI"
             Dim "    search.$d      ->  HTTP  caddy:80   SearXNG"
             Dim "    n8n.$d         ->  HTTP  caddy:80   n8n workflows"
+            Dim "    hermes.$d      ->  HTTP  caddy:80   Hermes Workspace"
         }
         Dim "    portainer.$d   ->  HTTP  caddy:80   Portainer (SSO)"
         Dim "    auth.$d        ->  HTTP  caddy:80   Authelia login (REQUIRED)"
@@ -1549,7 +1555,7 @@ if ($StartOnly) {
     $useTunnel = [bool]$stateBlob.useTunnel
     $gpuMode   = [string]$stateBlob.gpuMode
     if ($customSvc -and $customSvc.Count -gt 0) {
-        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','n8n' }).Count -gt 0
+        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-workspace','n8n' }).Count -gt 0
         $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser' }).Count -gt 0
     } else {
         $hasAi    = $profiles -contains 'ai'
