@@ -2,31 +2,31 @@
   <img src="GITHUB-LOGO.png" alt="EISA Homelab" width="900">
 </p>
 
-# EISA Homelab
+# 🏠 EISA Homelab
 
-> **The ultimate private, no-tracking homelab stack.**
-> 100% local-first  ·  zero telemetry  ·  your data on your machine.
+> 🛡️ **The ultimate private, no-tracking homelab stack.**
+> 💻 100% local-first  ·  🔇 zero telemetry  ·  🔐 your data on your machine.
 >
-> Created by **Ahmed Al-EISA**.
+> 👤 Created by **Ahmed Al-EISA**.
 
 A one-machine homelab stack: media (Jellyfin / Navidrome / Immich), files
 (Filebrowser), local AI (Ollama + Open WebUI + SearXNG + Local Deep Research +
 Vane), workflow automation (n8n), reverse proxy (Caddy), SSO (Authelia),
 tunnel (Cloudflared), Tor browser, Portainer, and Heimdall as the landing page.
 
-### Why it's private
+### 🛡️ Why it's private
 
-- **LLMs run locally.** Ollama hosts every model on your hardware — prompts,
+- 🧠 **LLMs run locally.** Ollama hosts every model on your hardware — prompts,
   responses, and embeddings never leave your network.
-- **No telemetry.** n8n diagnostics + personalization are forced off; SearXNG
+- 📡🚫 **No telemetry.** n8n diagnostics + personalization are forced off; SearXNG
   is configured for zero tracking; nothing in the stack phones home.
-- **No third-party AI providers.** Open WebUI, Local Deep Research, and Vane
+- 🤖🚪 **No third-party AI providers.** Open WebUI, Local Deep Research, and Vane
   all talk to the local Ollama API, not OpenAI / Anthropic / Google.
-- **No accounts required.** Everything authenticates against your own
+- 🔑 **No accounts required.** Everything authenticates against your own
   Authelia instance — there is no cloud sign-up anywhere in the install path.
-- **Tor browser included** for the moments you want to leave even your
+- 🧅 **Tor browser included** for the moments you want to leave even your
   home IP behind.
-- **Tunnel mode is opt-in.** If you turn it off (the default), the stack is
+- 🌐 **Tunnel mode is opt-in.** If you turn it off (the default), the stack is
   unreachable from the public internet — period.
 
 Two ways to run it:
@@ -41,7 +41,7 @@ to run: **AI only**, **Media & Productivity only**, or **Ultimate** (both).
 
 ---
 
-## Prerequisites
+## 📋 Prerequisites
 
 - **Windows 10/11** with PowerShell 5.1+ (PowerShell 7 / `pwsh` works too) **or
   macOS 12+** with PowerShell 7. The Mac launcher will install `pwsh` via
@@ -58,7 +58,7 @@ to run: **AI only**, **Media & Productivity only**, or **Ultimate** (both).
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
 There is **one entry point per platform**. Everything else lives behind a menu.
 
@@ -150,78 +150,78 @@ If you ever want to wipe docker volumes or prune dangling images, run
 
 ---
 
-## What each app is for (plain English)
+## 🎯 What each app is for (plain English)
 
 Quick tour of every container in the stack, grouped by what it's for.
 Skip to the section that matches what you want to do.
 
-### CORE — always installed, you usually don't think about them
+### 🏗️ CORE — always installed, you usually don't think about them
 
-- **Heimdall** — your homepage. One web page with tiles for every other
+- 🏠 **Heimdall** — your homepage. One web page with tiles for every other
   app, so you don't have to remember port numbers. The first thing you'll
   bookmark.
-- **Caddy** — the traffic cop. Routes incoming web requests to the right
+- 🚦 **Caddy** — the traffic cop. Routes incoming web requests to the right
   app. You never click on it; it just works in the background.
-- **Authelia** — the login page. When you publish your stack online
+- 🔐 **Authelia** — the login page. When you publish your stack online
   (tunnel mode), this is what people log in through. Adds 2FA, group
   permissions, etc. Idle in local-only mode.
-- **Portainer** — a web GUI for managing all the Docker containers.
+- 🎛️ **Portainer** — a web GUI for managing all the Docker containers.
   Useful when you want to look at logs or restart something without
   using the command line.
 
-### AI — local LLMs, private search, automations
+### 🤖 AI — local LLMs, private search, automations
 
-- **Ollama** — the engine that runs AI language models on your own
+- 🧠 **Ollama** — the engine that runs AI language models on your own
   computer. The chat / search / research apps below all talk to it.
   Nothing ever leaves your machine.
-- **Open WebUI** — a ChatGPT-style chat window for talking to the local
+- 💬 **Open WebUI** — a ChatGPT-style chat window for talking to the local
   AI. The main app you'll use in this category.
-- **SearXNG** — a private search engine. Pulls results from Google /
+- 🔍 **SearXNG** — a private search engine. Pulls results from Google /
   Bing / DuckDuckGo without telling them who you are.
-- **Local Deep Research** — an AI research assistant. Give it a topic
+- 📚 **Local Deep Research** — an AI research assistant. Give it a topic
   and it reads dozens of web pages and writes you a structured report.
   Like a one-person research team that works overnight.
-- **Vane** — a "Perplexity-style" answer engine. Type a question, get a
+- ❓ **Vane** — a "Perplexity-style" answer engine. Type a question, get a
   short answer with sources. Faster than chat for one-shot lookups.
-- **n8n** — a drag-and-drop automation builder. You wire up blocks
+- 🔗 **n8n** — a drag-and-drop automation builder. You wire up blocks
   ("when an email arrives → save the attachment → ask the AI to
   summarise it → text me the result") into workflows that run on a
   schedule.
 
-### MEDIA — your own Netflix / Spotify / Google Photos
+### 🎬 MEDIA — your own Netflix / Spotify / Google Photos
 
-- **Jellyfin** — your own Netflix for movies and TV. Reads from the
+- 🎥 **Jellyfin** — your own Netflix for movies and TV. Reads from the
   Movies + TV Shows folders you set in the wizard, streams to your TV,
   phone, or browser. Free, no subscription.
-- **Navidrome** — your own Spotify for music. Reads from your Music
+- 🎵 **Navidrome** — your own Spotify for music. Reads from your Music
   folder, streams to phone and browser. Beautiful mobile apps available.
-- **Immich** — your own Google Photos. Auto-backup from your phone,
+- 📸 **Immich** — your own Google Photos. Auto-backup from your phone,
   face / object recognition, search by what's IN the photo, share
   albums. Replaces Google Photos completely.
 
-### PRODUCTIVITY — utilities and one-off tools
+### 🛠️ PRODUCTIVITY — utilities and one-off tools
 
-- **Filebrowser** — a web file explorer for the folders you exposed
+- 📂 **Filebrowser** — a web file explorer for the folders you exposed
   (movies, music, photos, downloads). Upload, rename, move files from
   any browser without remoting into the machine.
-- **Omni Tools** — a grab-bag of small web utilities. Resize images,
+- 🧰 **Omni Tools** — a grab-bag of small web utilities. Resize images,
   convert file formats, generate QR codes, base64-encode, etc. Like
   the "online tools" sites you've used, but running locally so nothing
   uploads anywhere.
-- **Tor Browser** — a full Tor Browser running in your browser tab.
+- 🧅 **Tor Browser** — a full Tor Browser running in your browser tab.
   Opens onion sites and routes through Tor without installing anything
   on your machine. One click from Heimdall.
 
-### ONLINE-ONLY — only runs in tunnel mode
+### 🌐 ONLINE-ONLY — only runs in tunnel mode
 
-- **Cloudflared** — the secure connector to your Cloudflare account.
+- ☁️ **Cloudflared** — the secure connector to your Cloudflare account.
   Lets people on the internet reach `chat.yourdomain.com`,
   `movie.yourdomain.com`, etc. without you opening any router ports.
   Excluded automatically in local-only mode.
 
 ---
 
-## What's running
+## 🗺️ What's running
 
 | Service          | Local URL                  | Notes |
 | ---------------- | -------------------------- | --- |
@@ -261,7 +261,7 @@ subdomain map is in `files/persistent-storage/caddy/Caddyfile.tmpl` and
 
 ---
 
-## Configuring Authelia users
+## 🔑 Configuring Authelia users
 
 After the first run, the wizard copies `users_database.yml.example` to
 `users_database.yml` if it's not already there. **The placeholder password
@@ -277,7 +277,7 @@ in place of `__ARGON2_HASH_REPLACE_ME__`, and `docker restart Authelia`.
 
 ---
 
-## Storage layout
+## 💾 Storage layout
 
 The wizard asks for four user-facing media paths and writes them to `.env`
 as absolute paths (forward-slashed for docker compose):
@@ -295,7 +295,7 @@ restarts.
 
 ---
 
-## Files & folders
+## 📁 Files & folders
 
 ```
 .
@@ -324,7 +324,7 @@ templates are tracked.
 
 ---
 
-## Running on a Mac Studio M1 Ultra (or any Apple Silicon)
+## 🍎 Running on a Mac Studio M1 Ultra (or any Apple Silicon)
 
 The full stack runs cleanly on Apple Silicon — **every image in the compose
 ships a `linux/arm64` manifest** so Docker Desktop on Mac pulls native ARM
@@ -353,7 +353,7 @@ opens the same menu and runs the same self-healing wizard.
 
 ---
 
-## Troubleshooting
+## 🩹 Troubleshooting
 
 - **`Docker engine did not come up within 5 minutes`** — on a freshly auto-installed
   Docker Desktop, Windows usually needs a sign-out or reboot to finish setting
@@ -374,7 +374,7 @@ opens the same menu and runs the same self-healing wizard.
 
 ---
 
-## Security notes
+## 🔒 Security notes
 
 - Real `.env`, `users_database.yml`, and rendered `Caddyfile` /
   `configuration.yml` / `settings.yml` files are gitignored. Do not commit
