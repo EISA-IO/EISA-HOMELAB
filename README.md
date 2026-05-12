@@ -11,9 +11,8 @@
 
 A one-machine homelab stack: media (Jellyfin / Navidrome / Immich), files
 (Filebrowser), local AI (Ollama + Open WebUI + SearXNG + Local Deep Research +
-Vane), workflow automation (n8n + Postgres + Qdrant), reverse proxy (Caddy),
-SSO (Authelia), tunnel (Cloudflared), Tor browser, Portainer, and Heimdall as
-the landing page.
+Vane), workflow automation (n8n), reverse proxy (Caddy), SSO (Authelia),
+tunnel (Cloudflared), Tor browser, Portainer, and Heimdall as the landing page.
 
 ### Why it's private
 
@@ -239,7 +238,6 @@ Skip to the section that matches what you want to do.
 | Local Deep Research | <http://localhost:5000> | AI research assistant |
 | Vane             | <http://localhost:3000>    | AI answer engine |
 | n8n              | <http://localhost:5678>    | Workflow automation |
-| Qdrant           | <http://localhost:6333>    | Vector DB (used by n8n) |
 | Portainer        | <http://localhost:9000>    | Container management |
 | Tor Browser      | <http://tor.localhost/>    | Zero-click auto-login through Caddy (no kasm prompt). Direct kasm at <https://localhost:6901> still works but asks for the basic-auth password. |
 | Omni Tools       | <http://localhost:8890>    | Misc utilities |
