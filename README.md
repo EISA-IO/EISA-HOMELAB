@@ -2,7 +2,7 @@
   <img src="GITHUB-LOGO.png" alt="EISA Homelab" width="900">
 </p>
 
-# 🏠 EISA Homelab
+# 🏠 EISA Homelab (Local Netflix, Spotify, Google Photos, Dropbox, ChatGPT, Perplexity, Scheduled Automation)
 
 > 🛡️ **The ultimate private, no-tracking homelab stack.**
 > 💻 100% local-first  ·  🔇 zero telemetry  ·  🔐 your data on your machine.
