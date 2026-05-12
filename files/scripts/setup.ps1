@@ -603,6 +603,49 @@ function Invoke-Wizard {
         Ok 'Media folders saved.'
     }
 
+    # ---- Step 3b: GPU acceleration for Ollama (only if AI in stack) ------
+    $gpuMode = 'cpu'
+    if ($hasAi) {
+        $detected = Get-OllamaGpuMode -OS $script:OS
+        Step 'Step 3b — GPU acceleration for Ollama' "We auto-detected your GPU as: $($detected.ToUpper()). You can override below if needed."
+        $gpuPick = Ask-Choice @(
+            [pscustomobject]@{
+                Label = "Use auto-detected: $($detected.ToUpper())"
+                Hint  = @(
+                    'Recommended. Trust the detection unless you know better.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'NVIDIA (CUDA)'
+                Hint  = @(
+                    'Requires NVIDIA driver + Docker Desktop "Enable GPU support",'
+                    'or on Linux: nvidia-container-toolkit installed.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'AMD (ROCm) - Linux only'
+                Hint  = @(
+                    'Requires ROCm-compatible AMD GPU + ROCm drivers on a Linux host.'
+                    'Docker Desktop on Windows does NOT support AMD passthrough.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'CPU only'
+                Hint  = @(
+                    'Works on every machine but slower. Default for macOS (Docker'
+                    'on Mac cannot expose Metal to containers).'
+                )
+            }
+        )
+        $gpuMode = switch ($gpuPick) {
+            1 { $detected }
+            2 { 'nvidia' }
+            3 { 'amd' }
+            4 { 'cpu' }
+        }
+        Ok "GPU mode: $($gpuMode.ToUpper())"
+    }
+
     # ---- Step 5: passwords + secrets -------------------------------------
     Step 'Step 4 — Secrets' 'Generating strong random keys for databases, n8n, and SSO. Nothing for you to type.'
     $genSpecs = @(
@@ -640,6 +683,7 @@ function Invoke-Wizard {
         UseTunnel = $useTunnel
         HasAi     = $hasAi
         HasMedia  = $hasMedia
+        GpuMode   = $gpuMode
     }
 }
 
@@ -701,7 +745,19 @@ function Render-Templates {
 
     if (-not $StateBlob.SEARXNG_SECRET_KEY)            { $StateBlob.SEARXNG_SECRET_KEY            = New-HexSecret 32 }
     if (-not $StateBlob.AUTHELIA_JWT_SECRET)           { $StateBlob.AUTHELIA_JWT_SECRET           = New-HexSecret 32 }
-    if (-not $StateBlob.AUTHELIA_STORAGE_ENCRYPTION_KEY) { $StateBlob.AUTHELIA_STORAGE_ENCRYPTION_KEY = New-HexSecret 32 }
+    if (-not $StateBlob.AUTHELIA_STORAGE_ENCRYPTION_KEY) {
+        # We're generating a brand-new storage encryption key. If a stale
+        # Authelia SQLite db exists, it was encrypted with the (now-lost)
+        # previous key. Wipe it so Authelia re-initialises cleanly. Authelia
+        # data is just session/2FA state — nothing irreplaceable on a fresh
+        # install. users_database.yml is separate and survives.
+        $autheliaDb = Join-Path $ProjectRoot 'persistent-storage/authelia/db.sqlite3'
+        if (Test-Path $autheliaDb) {
+            Remove-Item $autheliaDb -Force -ErrorAction SilentlyContinue
+            Dim '  Wiped stale Authelia db.sqlite3 (encryption key was regenerated).'
+        }
+        $StateBlob.AUTHELIA_STORAGE_ENCRYPTION_KEY = New-HexSecret 32
+    }
 
     $renderEnv = [ordered]@{}
     foreach ($k in $Env.Keys) { $renderEnv[$k] = $Env[$k] }
@@ -880,6 +936,7 @@ function New-StateBlob {
         AUTHELIA_STORAGE_ENCRYPTION_KEY = ''
         profiles                        = @('ai','media')
         useTunnel                       = $false
+        gpuMode                         = 'cpu'
         configured                      = $true
     }
 }
@@ -888,11 +945,19 @@ function New-StateBlob {
 # Compose start / stop.
 # ---------------------------------------------------------------------------
 function Start-Stack {
-    param([string[]]$Profiles, [bool]$UseTunnel)
+    param(
+        [string[]]$Profiles,
+        [bool]$UseTunnel,
+        [string]$GpuMode = 'cpu'   # 'cpu' (default) | 'nvidia' | 'amd'
+    )
     $effective = @($Profiles)
     if ($UseTunnel) { $effective += 'tunnel' }
 
-    $arglist = @('compose')
+    $arglist = @('compose', '-f', 'docker-compose.yml')
+    switch ($GpuMode) {
+        'nvidia' { $arglist += @('-f', 'docker-compose.nvidia.yml') }
+        'amd'    { $arglist += @('-f', 'docker-compose.amd.yml') }
+    }
     foreach ($p in $effective) { $arglist += @('--profile', $p) }
     $arglist += @('up','-d')
 
@@ -905,6 +970,39 @@ function Start-Stack {
         exit $LASTEXITCODE
     }
     Ok 'Stack is up.'
+}
+
+# ---------------------------------------------------------------------------
+# Get-OllamaGpuMode: best-effort GPU detection. Returns 'nvidia', 'amd',
+# or 'cpu'. Used as the default for the first-run wizard and on every
+# -StartOnly when no explicit choice has been persisted yet.
+# ---------------------------------------------------------------------------
+function Get-OllamaGpuMode {
+    param([string]$OS = $script:OS)
+
+    # Apple Silicon and Intel Macs: Docker Desktop on Mac runs containers in
+    # a Linux VM that can't reach Metal / eGPU, so containerised Ollama is
+    # always CPU. (Power users can bypass by installing ollama natively.)
+    if ($OS -eq 'Mac') { return 'cpu' }
+
+    # NVIDIA: check whether docker has the nvidia runtime registered.
+    try {
+        $info = (& docker info --format '{{json .Runtimes}}' 2>$null) | Out-String
+        if ($info -match '"nvidia"') { return 'nvidia' }
+    } catch {}
+
+    # Windows fallback: try nvidia-smi on the host.
+    if ($OS -eq 'Windows') {
+        try {
+            $null = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+            if ($LASTEXITCODE -eq 0) { return 'nvidia' }
+        } catch {}
+    }
+
+    # AMD ROCm (Linux only — Docker Desktop on Windows doesn't expose AMD).
+    if ($OS -eq 'Linux' -and (Test-Path '/dev/kfd')) { return 'amd' }
+
+    return 'cpu'
 }
 
 # ---------------------------------------------------------------------------
@@ -1023,6 +1121,14 @@ function Show-Summary {
         Dim '                Apps reachable from anywhere via your subdomains.'
     } else {
         Dim '  Hosting mode: LOCAL ONLY  (LAN access only; nothing exposed publicly)'
+    }
+    if ($Result.HasAi) {
+        $gpuLabel = switch ($Result.GpuMode) {
+            'nvidia' { 'NVIDIA GPU (CUDA)' }
+            'amd'    { 'AMD GPU (ROCm)' }
+            default  { 'CPU only' }
+        }
+        Dim "  GPU mode    : $gpuLabel  (Ollama)"
     }
     G ''
     G '  Open these in your browser:'
@@ -1181,7 +1287,7 @@ if ($StartOnly) {
 
     # 4. Load / synth state blob.
     $stateBlob = if ($state) { $state } else { New-StateBlob }
-    foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','useTunnel','configured')) {
+    foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','useTunnel','gpuMode','configured')) {
         if (-not $stateBlob.PSObject.Properties[$k]) {
             $stateBlob | Add-Member -NotePropertyName $k -NotePropertyValue $null
         }
@@ -1191,6 +1297,11 @@ if ($StartOnly) {
     }
     # Auto-detect tunnel: only enable if the user supplied a real token.
     $stateBlob.useTunnel = -not (Test-Placeholder $envMap['CLOUDFLARE_TUNNEL_TOKEN'])
+    # Auto-detect GPU mode if not already persisted by first-run.
+    if (-not $stateBlob.gpuMode -or $stateBlob.gpuMode -notin @('cpu','nvidia','amd')) {
+        $stateBlob.gpuMode = Get-OllamaGpuMode
+        Dim "  Detected GPU mode: $($stateBlob.gpuMode.ToUpper())"
+    }
     $stateBlob.configured = $true
 
     # 5. Render Caddyfile, Authelia configuration.yml, SearXNG settings.yml
@@ -1208,10 +1319,11 @@ if ($StartOnly) {
     # 8. Start.
     $profiles  = @($stateBlob.profiles)
     $useTunnel = [bool]$stateBlob.useTunnel
+    $gpuMode   = [string]$stateBlob.gpuMode
     $hasAi     = $profiles -contains 'ai'
     $hasMedia  = $profiles -contains 'media'
 
-    Start-Stack -Profiles $profiles -UseTunnel $useTunnel
+    Start-Stack -Profiles $profiles -UseTunnel $useTunnel -GpuMode $gpuMode
 
     if ($hasAi -and (Get-OllamaModelCount) -eq 0) {
         Install-FirstLlm
@@ -1222,6 +1334,7 @@ if ($StartOnly) {
         HasAi     = $hasAi
         HasMedia  = $hasMedia
         UseTunnel = $useTunnel
+        GpuMode   = $gpuMode
     })
     exit 0
 }
@@ -1240,16 +1353,18 @@ $stateBlob = if ($state) { $state } else {
         AUTHELIA_STORAGE_ENCRYPTION_KEY = ''
         profiles                       = @()
         useTunnel                      = $false
+        gpuMode                        = 'cpu'
         configured                     = $false
     }
 }
-foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','useTunnel','configured')) {
+foreach ($k in @('SEARXNG_SECRET_KEY','AUTHELIA_JWT_SECRET','AUTHELIA_STORAGE_ENCRYPTION_KEY','profiles','useTunnel','gpuMode','configured')) {
     if (-not $stateBlob.PSObject.Properties[$k]) {
         $stateBlob | Add-Member -NotePropertyName $k -NotePropertyValue $null
     }
 }
 $stateBlob.profiles   = $result.Profiles
 $stateBlob.useTunnel  = $result.UseTunnel
+$stateBlob.gpuMode    = $result.GpuMode
 $stateBlob.configured = $true
 
 Repair-BindPaths
@@ -1258,7 +1373,7 @@ Ensure-AutheliaUser -EnvMap $result.Env
 Write-State -State $stateBlob
 
 if (-not $NoStart) {
-    Start-Stack -Profiles $result.Profiles -UseTunnel $result.UseTunnel
+    Start-Stack -Profiles $result.Profiles -UseTunnel $result.UseTunnel -GpuMode $result.GpuMode
 }
 
 if (-not $NoStart -and $result.HasAi) {

@@ -237,13 +237,11 @@ services:
     restart: always
     networks:
       - caddy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: ${OLLAMA_GPU_DRIVER-nvidia}
-              count: 1
-              capabilities: ["gpu"]
+    # GPU acceleration is opt-in via override files (chosen by setup.ps1):
+    #   docker-compose.nvidia.yml  -> adds NVIDIA device reservation
+    #   docker-compose.amd.yml     -> swaps to ollama:rocm + /dev/kfd, /dev/dri
+    # With no override, this runs CPU-only (works everywhere, including
+    # Apple Silicon, AMD without ROCm, plain Intel, etc.).
     profiles: [ai]
 
   # ========================

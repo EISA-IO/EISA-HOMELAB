@@ -1,0 +1,26 @@
+# =============================================================================
+# Compose override - AMD ROCm GPU acceleration for Ollama  (Linux only)
+#
+# Applied automatically by setup.ps1 when the wizard's GPU detection picks
+# 'amd' (or when state.gpuMode == 'amd'). This:
+#   - Swaps the image to Ollama's ROCm build  (ollama/ollama:rocm)
+#   - Mounts /dev/kfd + /dev/dri so the container can talk to the GPU
+#   - Adds the container's user to the 'video' group
+#
+# Requirements on the host:
+#   - Linux with AMD ROCm-compatible GPU + ROCm drivers installed
+#   - Docker engine on Linux (NOT Docker Desktop on Windows; AMD passthrough
+#     on Windows is not supported by Docker Desktop at this time).
+#
+# To test manually:
+#   docker compose -f docker-compose.yml -f docker-compose.amd.yml \
+#     --profile ai up -d ollama
+# =============================================================================
+services:
+  ollama:
+    image: ollama/ollama:rocm
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video

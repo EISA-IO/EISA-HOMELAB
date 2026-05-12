@@ -1,0 +1,23 @@
+# =============================================================================
+# Compose override - NVIDIA GPU acceleration for Ollama
+#
+# Applied automatically by setup.ps1 when the wizard's GPU detection picks
+# 'nvidia' (or when state.gpuMode == 'nvidia').
+#
+# Requirements on the host:
+#   - Windows / WSL2: latest NVIDIA driver + Docker Desktop "Enable GPU support"
+#   - Linux:          NVIDIA Container Toolkit (`apt install nvidia-container-toolkit`)
+#
+# To test manually:
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml \
+#     --profile ai up -d ollama
+# =============================================================================
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
