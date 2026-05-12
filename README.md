@@ -7,7 +7,7 @@
 > **The ultimate private, no-tracking homelab stack.**
 > 100% local-first  ·  zero telemetry  ·  your data on your machine.
 >
-> Created by **Ahmed Al-EISA** ([@EISA-IO](https://github.com/EISA-IO)).
+> Created by **Ahmed Al-EISA**.
 
 A one-machine homelab stack: media (Jellyfin / Navidrome), files (Filebrowser),
 local AI (Ollama + Open WebUI + SearXNG + Local Deep Research + Vane), workflow
