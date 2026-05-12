@@ -151,6 +151,87 @@ If you ever want to wipe docker volumes or prune dangling images, run
 
 ---
 
+## What each app is for (plain English)
+
+Quick tour of every container in the stack, grouped by what it's for.
+Skip to the section that matches what you want to do.
+
+### CORE — always installed, you usually don't think about them
+
+- **Heimdall** — your homepage. One web page with tiles for every other
+  app, so you don't have to remember port numbers. The first thing you'll
+  bookmark.
+- **Caddy** — the traffic cop. Routes incoming web requests to the right
+  app. You never click on it; it just works in the background.
+- **Authelia** — the login page. When you publish your stack online
+  (tunnel mode), this is what people log in through. Adds 2FA, group
+  permissions, etc. Idle in local-only mode.
+- **Portainer** — a web GUI for managing all the Docker containers.
+  Useful when you want to look at logs or restart something without
+  using the command line.
+
+### AI — local LLMs, private search, automations
+
+- **Ollama** — the engine that runs AI language models on your own
+  computer. The chat / search / research apps below all talk to it.
+  Nothing ever leaves your machine.
+- **Open WebUI** — a ChatGPT-style chat window for talking to the local
+  AI. The main app you'll use in this category.
+- **SearXNG** — a private search engine. Pulls results from Google /
+  Bing / DuckDuckGo without telling them who you are.
+- **Local Deep Research** — an AI research assistant. Give it a topic
+  and it reads dozens of web pages and writes you a structured report.
+  Like a one-person research team that works overnight.
+- **Vane** — a "Perplexity-style" answer engine. Type a question, get a
+  short answer with sources. Faster than chat for one-shot lookups.
+- **n8n** — a drag-and-drop automation builder. You wire up blocks
+  ("when an email arrives → save the attachment → ask the AI to
+  summarise it → text me the result") into workflows that run on a
+  schedule.
+- **n8n-postgres** — the database n8n uses to remember its workflows.
+  Internal plumbing; you don't open it directly.
+- **Qdrant** — a "vector database". Lets the AI search by meaning
+  instead of keywords. Used by n8n's AI nodes and the research tools.
+  Plumbing.
+
+### MEDIA — your own Netflix / Spotify / Google Photos
+
+- **Jellyfin** — your own Netflix for movies and TV. Reads from the
+  Movies + TV Shows folders you set in the wizard, streams to your TV,
+  phone, or browser. Free, no subscription.
+- **Navidrome** — your own Spotify for music. Reads from your Music
+  folder, streams to phone and browser. Beautiful mobile apps available.
+- **Immich** — your own Google Photos. Auto-backup from your phone,
+  face / object recognition, search by what's IN the photo, share
+  albums. Replaces Google Photos completely.
+- **immich-machine-learning** — Immich's brain. Does the face / object
+  recognition. You never click on it directly.
+- **immich-redis** — Immich's short-term memory cache. Internal plumbing.
+- **immich-postgres** — Immich's database. Stores who's in each photo,
+  album info, etc. Plumbing.
+
+### PRODUCTIVITY — utilities and one-off tools
+
+- **Filebrowser** — a web file explorer for the folders you exposed
+  (movies, music, photos, downloads). Upload, rename, move files from
+  any browser without remoting into the machine.
+- **Omni Tools** — a grab-bag of small web utilities. Resize images,
+  convert file formats, generate QR codes, base64-encode, etc. Like
+  the "online tools" sites you've used, but running locally so nothing
+  uploads anywhere.
+- **Tor Browser** — a full Tor Browser running in your browser tab.
+  Opens onion sites and routes through Tor without installing anything
+  on your machine. One click from Heimdall.
+
+### ONLINE-ONLY — only runs in tunnel mode
+
+- **Cloudflared** — the secure connector to your Cloudflare account.
+  Lets people on the internet reach `chat.yourdomain.com`,
+  `movie.yourdomain.com`, etc. without you opening any router ports.
+  Excluded automatically in local-only mode.
+
+---
+
 ## What's running
 
 | Service          | Local URL                  | Notes |
