@@ -1090,66 +1090,109 @@ function Read-RecommendedModels {
     return $items
 }
 
+function Test-OllamaModelInstalled {
+    param([string]$Tag)
+    try {
+        $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -UseBasicParsing -TimeoutSec 5
+        $j = $resp.Content | ConvertFrom-Json
+        foreach ($m in @($j.models)) {
+            if ($m.name -eq $Tag -or $m.model -eq $Tag) { return $true }
+        }
+    } catch {}
+    return $false
+}
+
+# Pull a model into whichever Ollama is reachable on :11434. Tries, in order:
+#   1. `docker exec -it ollama ollama pull <tag>` (in-container ollama)
+#   2. `& ollama pull <tag>`                       (host ollama CLI - Mac native)
+#   3. POST /api/pull                              (last-resort streaming API)
+function Invoke-OllamaPull {
+    param([Parameter(Mandatory)][string]$Tag)
+
+    # Containerised ollama present?
+    try {
+        $null = & docker inspect -f '{{.Id}}' ollama 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            & docker exec -it ollama ollama pull $Tag
+            return ($LASTEXITCODE -eq 0)
+        }
+    } catch {}
+
+    # Host ollama CLI?
+    try {
+        $null = & ollama --version 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            & ollama pull $Tag
+            return ($LASTEXITCODE -eq 0)
+        }
+    } catch {}
+
+    # API fallback (no nice progress, but works headless).
+    Dim '  Streaming pull via /api/pull (no progress bar)...'
+    try {
+        $body = @{ name = $Tag } | ConvertTo-Json -Compress
+        Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/pull' `
+            -Method Post -Body $body -ContentType 'application/json' `
+            -UseBasicParsing -TimeoutSec 3600 | Out-Null
+        return $true
+    } catch {
+        Err "  /api/pull failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Install-FirstLlm {
     $managerName = if ($script:OS -eq 'Mac') {
         'MAC-HOMELAB-MANAGER.COMMAND -> [4] LLM Manager'
     } else {
         'WINDOWS-HOMELAB-MANAGER.BAT -> [4] LLM Manager'
     }
-    Step 'Step 5 — Pick a starter LLM' "No models in Ollama yet. Pick one to download now (or skip and use $managerName later)."
+    Step 'Step 5 — Starter LLMs' 'Auto-installing two recommended models so you have something to chat with out of the box. This may take a few minutes per model (~5 GB each).'
 
     if (-not (Wait-Ollama -TimeoutSeconds 90)) {
         Err 'Ollama is not responding on http://127.0.0.1:11434. Skipping model install.'
         Dim "  You can run $managerName after Ollama is up."
         return
     }
-    if ((Get-OllamaModelCount) -gt 0) {
-        Ok 'A model is already installed — skipping picker.'
-        return
-    }
 
-    $models = Read-RecommendedModels
-    if (-not $models -or $models.Count -eq 0) {
-        Dim '  No recommended_models.txt entries found. Skipping.'
-        return
-    }
-
-    $options = @()
-    $tagsInOrder = @()
-    $lastTier = $null
-    foreach ($m in $models) {
-        if ($m.Tier -ne $lastTier) {
-            $banner = if ($m.Tier -eq 'LOW') { 'LOW VRAM (8 GB or less)' }
-                      elseif ($m.Tier -eq 'HIGH') { 'HIGH VRAM (16 GB+)' }
-                      else { $m.Tier }
-            G ''
-            Dim "  $banner"
-            $lastTier = $m.Tier
+    $starters = @(
+        [pscustomobject]@{
+            Tag     = 'huihui_ai/gemma-4-abliterated:e4b-q4_K'
+            Title   = 'Gemma 4 (e4b, Q4_K) - abliterated'
+            Purpose = 'General-purpose, uncensored AI. Use this for everyday chat,'
+            Purpose2= 'writing, brainstorming, summarising, Q&A. Smaller + faster.'
         }
-        $idx = $options.Count + 1
-        G ("    [{0}] {1}" -f $idx, $m.Tag)
-        $options += $m
-        $tagsInOrder += $m.Tag
-    }
-    G ''
-    G "    [0] Skip — install later with $managerName"
-    G ''
-
-    while ($true) {
-        Write-Host '  > ' -NoNewline -ForegroundColor Green
-        $pick = Read-Host
-        $n = 0
-        if ($pick -eq '0') { Ok 'Skipped.'; return }
-        if ([int]::TryParse($pick, [ref]$n) -and $n -ge 1 -and $n -le $tagsInOrder.Count) {
-            $tag = $tagsInOrder[$n - 1]
-            G ''
-            Dim "  Pulling $tag (this can take a while)..."
-            & docker exec -it ollama ollama pull $tag
-            if ($LASTEXITCODE -eq 0) { Ok "Installed $tag" } else { Err "Failed to pull $tag" }
-            return
+        [pscustomobject]@{
+            Tag     = 'carstenuhlig/omnicoder-2-9b:q4_k_m'
+            Title   = 'OmniCoder 2 (9B, Q4_K_M)'
+            Purpose = 'Agentic + coding model. Use this when you want the LLM to'
+            Purpose2= 'write/edit code, drive tools, or plan multi-step tasks.'
         }
-        Err 'pick a number from the list'
+    )
+
+    foreach ($m in $starters) {
+        G ''
+        Dim '  ----------------------------------------------------------------'
+        G  "  $($m.Title)"
+        Dim "    $($m.Purpose)"
+        Dim "    $($m.Purpose2)"
+        Dim "    Tag: $($m.Tag)"
+        Dim '  ----------------------------------------------------------------'
+
+        if (Test-OllamaModelInstalled -Tag $m.Tag) {
+            Ok "$($m.Tag) already installed — skipping."
+            continue
+        }
+
+        if (Invoke-OllamaPull -Tag $m.Tag) {
+            Ok "Installed $($m.Tag)"
+        } else {
+            Err "Failed to pull $($m.Tag). You can retry from $managerName."
+        }
     }
+
+    G ''
+    Dim "  Want different / more models? Open $managerName."
 }
 
 # ---------------------------------------------------------------------------
