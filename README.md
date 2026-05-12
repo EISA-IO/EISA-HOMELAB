@@ -1,7 +1,9 @@
-# EISA Homelab Ultimate
+# EISA Homelab
 
 > **The ultimate private, no-tracking homelab stack.**
 > 100% local-first  ·  zero telemetry  ·  your data on your machine.
+>
+> Created by **Ahmed Al-EISA** ([@EISA-IO](https://github.com/EISA-IO)).
 
 A one-machine homelab stack: media (Jellyfin / Navidrome), files (Filebrowser),
 local AI (Ollama + Open WebUI + SearXNG + Local Deep Research + Vane), workflow
@@ -76,16 +78,16 @@ There is **one entry point per platform**. Everything else lives behind a menu.
 **Windows — fresh clone:**
 
 ```bat
-git clone https://github.com/EISA-IO/EISA-HOMELAB-ULTIMATE.git
-cd EISA-HOMELAB-ULTIMATE
+git clone https://github.com/EISA-IO/EISA-HOMELAB.git
+cd EISA-HOMELAB
 WINDOWS-HOMELAB-MANAGER.BAT      :: pick [1] the first time
 ```
 
 **macOS — fresh clone:**
 
 ```sh
-git clone https://github.com/EISA-IO/EISA-HOMELAB-ULTIMATE.git
-cd EISA-HOMELAB-ULTIMATE
+git clone https://github.com/EISA-IO/EISA-HOMELAB.git
+cd EISA-HOMELAB
 ./MAC-HOMELAB-MANAGER.COMMAND    # or double-click in Finder; pick [1] the first time
 ```
 
