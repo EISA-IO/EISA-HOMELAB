@@ -9,453 +9,159 @@
 >
 > 👤 Created by **Ahmed Al-EISA**.
 
-A one-machine homelab stack: media (Jellyfin / Navidrome / Immich), files
-(Filebrowser), local AI (Ollama + Open WebUI + SearXNG + Local Deep Research +
-Vane), workflow automation (n8n), reverse proxy (Caddy), SSO (Authelia),
-tunnel (Cloudflared), Tor browser, Portainer, and Heimdall as the landing page.
-
-### 🛡️ Why it's private
-
-- 🧠 **LLMs run locally.** Ollama hosts every model on your hardware — prompts,
-  responses, and embeddings never leave your network.
-- 📡🚫 **No telemetry.** n8n diagnostics + personalization are forced off; SearXNG
-  is configured for zero tracking; nothing in the stack phones home.
-- 🤖🚪 **No third-party AI providers.** Open WebUI, Local Deep Research, and Vane
-  all talk to the local Ollama API, not OpenAI / Anthropic / Google.
-- 🔑 **No accounts required.** Everything authenticates against your own
-  Authelia instance — there is no cloud sign-up anywhere in the install path.
-- 🧅 **Tor browser included** for the moments you want to leave even your
-  home IP behind.
-- 🌐 **Tunnel mode is opt-in.** If you turn it off (the default), the stack is
-  unreachable from the public internet — period.
-
-Two ways to run it:
-
-- **Local-only mode** — services reachable only on your LAN by `host:port`.
-- **Tunnel mode** — Cloudflare tunnel publishes them on subdomains of a domain
-  you own (`hub.example.com`, `chat.example.com`, ...) gated by Authelia SSO.
-
-The unified manager (`WINDOWS-HOMELAB-MANAGER.BAT` / `MAC-HOMELAB-MANAGER.COMMAND`)
-walks you through whichever you want, and lets you pick how much of the stack
-to run: **AI only**, **Media & Productivity only**, or **Ultimate** (both).
-
 ---
 
-## 📋 Prerequisites
+## ✨ What you get
 
-- **Windows 10/11** with PowerShell 5.1+ (PowerShell 7 / `pwsh` works too) **or
-  macOS 12+** with PowerShell 7. The Mac launcher will install `pwsh` via
-  Homebrew on first run if it's missing.
-- **Docker Desktop** — *not* required up front. If the wizard doesn't find it,
-  it will download and install Docker Desktop for you (winget → MSI on Windows,
-  Homebrew → DMG on macOS), then resume.
-  - For Ollama GPU acceleration on NVIDIA: install the latest NVIDIA driver
-    and enable WSL 2 GPU passthrough in Docker Desktop settings.
-- **Disk** with the media folders you want to expose. The wizard asks for each
-  folder by name (Movies / TV Shows / Music / Downloads).
-- **(Tunnel mode only)** A Cloudflare account with a domain on your account
-  and a tunnel created at <https://dash.cloudflare.com/>.
+**One wizard. ~20 containers. Zero cloud accounts. Five minutes from `git clone` to a running stack.**
+
+| | Replaces | Apps in the stack |
+| :-: | --- | --- |
+| 🎬 | Netflix / Spotify / Google Photos | **Jellyfin** · **Navidrome** · **Immich** |
+| 🤖 | ChatGPT / Perplexity / research agents | **Open WebUI** · **Vane** · **Local Deep Research** — all running on local **Ollama** |
+| 🪽 | a personal AI assistant that *learns* | **NousResearch Hermes** + **Hermes Workspace** web UI, pointed at OmniCoder 2 by default |
+| 🔗 | Zapier / Make.com | **n8n** drag-and-drop automation, wired into everything else |
+| 🧅 | a clean browser session | **Tor Browser** in a browser tab, one-click auto-login |
+| 📂 | Dropbox / a file manager over the LAN | **Filebrowser** + **Omni Tools** + **Portainer** |
+| 🌐 | port-forwarding pain | **Cloudflare tunnel** + **Authelia SSO** — opt-in; off by default |
+
+Nothing phones home. Every LLM prompt stays on your hardware. No OpenAI / Anthropic / Google in the install path. SearXNG has tracking disabled. Tunnel mode is opt-in (off by default) — local-only out of the box.
 
 ---
 
 ## 🚀 Quick start
 
-There is **one entry point per platform**. Everything else lives behind a menu.
+**One launcher per platform.** Everything else is behind a menu.
 
-| Platform | Launcher | Double-click? |
-| --- | --- | --- |
-| Windows | `WINDOWS-HOMELAB-MANAGER.BAT` | ✓ |
-| macOS   | `MAC-HOMELAB-MANAGER.COMMAND` | ✓ |
+```bat
+:: Windows
+git clone https://github.com/EISA-IO/EISA-HOMELAB.git
+cd EISA-HOMELAB
+WINDOWS-HOMELAB-MANAGER.BAT          :: or double-click it
+```
+
+```sh
+# macOS
+git clone https://github.com/EISA-IO/EISA-HOMELAB.git
+cd EISA-HOMELAB
+./MAC-HOMELAB-MANAGER.COMMAND        # or double-click in Finder
+```
+
+That opens this menu:
 
 ```
-  EISA HOMELAB ULTIMATE - Manager
-
-   [1] First-Run Setup       (wizard - run me once on a fresh clone)
-   [2] Start Stack           (day-to-day, brings everything up)
-   [3] Stop Stack            (compose down + cleanup)
-   [4] LLM Manager           (pull, launch, delete Ollama models)
-
+  EISA HOMELAB - Manager
+   [1] First-Run Setup    (wizard - run once on a fresh clone)
+   [2] Start Stack        (day-to-day, brings everything up)
+   [3] Stop Stack         (compose down + cleanup)
+   [4] LLM Manager        (pull / launch / delete Ollama models)
    [0] Exit
 ```
 
-**Windows — fresh clone:**
+The first-run wizard:
+- 🐳 Auto-installs **Docker Desktop** if it's missing (winget / MSI on Windows, brew / DMG on macOS) — one UAC / sudo prompt and it resumes.
+- 🧱 Asks which stack: **AI**, **Media**, **Productivity**, **Ultimate**, or **Custom** (pick individual apps).
+- 🌐 Asks hosting mode: **local-only** (default) or **Cloudflare tunnel** — walks you through getting a tunnel token if you choose tunnel.
+- 📁 Asks where your media lives in plain English (Movies, TV Shows, Music, Downloads, Photos).
+- 🔑 Generates every secret + Authelia argon2 hash silently.
+- 🧠 If AI is in the stack, auto-installs two starter LLMs (see [The LLMs](#-the-recommended-llms) below).
 
-```bat
-git clone https://github.com/EISA-IO/EISA-HOMELAB.git
-cd EISA-HOMELAB
-WINDOWS-HOMELAB-MANAGER.BAT      :: pick [1] the first time
-```
-
-**macOS — fresh clone:**
-
-```sh
-git clone https://github.com/EISA-IO/EISA-HOMELAB.git
-cd EISA-HOMELAB
-./MAC-HOMELAB-MANAGER.COMMAND    # or double-click in Finder; pick [1] the first time
-```
-
-### [1] First-Run Setup — what the wizard does, in order
-
-1. Checks Docker Desktop. If it's missing, asks for one-time admin / sudo and
-   installs it automatically (winget → MSI fallback on Windows, Homebrew → DMG
-   fallback on macOS), waits for the engine to come up, then continues.
-2. **Step 1** — pick a stack: `AI ONLY` / `MEDIA & PRODUCTIVITY` / `ULTIMATE`.
-3. **Step 2** — pick hosting mode: local-only LAN, or Cloudflare tunnel
-   (prompts for your domain + tunnel token if you choose tunnel; includes a
-   step-by-step walkthrough of getting the token from
-   <https://dash.cloudflare.com/>).
-4. **Step 3** *(only if media is in the stack)* — asks in plain language:
-   `MOVIES FOLDER LOCATION`, `TV SHOWS FOLDER LOCATION`,
-   `MUSIC FOLDER LOCATION`, `DOWNLOADS FOLDER LOCATION`.
-5. **Step 4** — silently generates strong random secrets for Postgres, n8n,
-   Hermes, Authelia, SearXNG, the Tor browser, etc.
-6. Renders `Caddyfile`, `authelia/configuration.yml`, and
-   `searxng/settings.yml` from their `.tmpl` templates and brings the right
-   docker compose profiles up (`ai`, `media`, plus `tunnel` if applicable).
-7. **Step 5** *(only if AI is in the stack and Ollama has no models yet)* —
-   shows the LOW/HIGH VRAM picks from `recommended_models.txt` and pulls
-   the one you pick.
-
-To change your choices later, the wizard accepts these flags when called
-directly from the command line:
-
-```bat
-:: Windows: re-run the wizard from the shell (skips the menu)
-%PS% -File files\scripts\setup.ps1 -Reconfigure
-:: or just open the manager and pick [1] again.
-```
-
-### [2] Start Stack
-
-Self-healing. Renders any missing configs, fixes Docker-auto-created stray
-dirs at bind-file paths, sets up the Authelia admin user the first time, then
-runs `docker compose up -d` with whichever profiles you picked in first-run.
-
-### [3] Stop Stack
-
-`docker compose down --remove-orphans` with all profiles active, plus a
-by-`container_name` fallback so containers from older installs (different
-compose project names) are also caught.
-
-`docker compose down` stops + removes the containers and the `caddy` network,
-but does **not** touch:
-
-- Named docker volumes (so Ollama models, Open WebUI data, Jellyfin cache, etc.
-  survive a stop/start cycle).
-- Anything under `files/persistent-storage/`.
-- Your media on `MOVIES_PATH` / `TV_SHOWS_PATH` / `MUSIC_PATH` / `DOWNLOADS_PATH`.
-
-If you ever want to wipe docker volumes or prune dangling images, run
-`docker compose down --volumes` or `docker system prune -f` by hand.
+After that, day-to-day is `[2] Start Stack` / `[3] Stop Stack`. Stopping never touches your media folders or the docker named volumes — Ollama models, Open WebUI history, Jellyfin cache, etc. all survive.
 
 ---
 
-## 🎯 What each app is for (plain English)
+## 🎯 What each app does (plain English)
 
-Quick tour of every container in the stack, grouped by what it's for.
-Skip to the section that matches what you want to do.
+### 🏗️ CORE — always on, you usually don't think about them
 
-### 🏗️ CORE — always installed, you usually don't think about them
+- 🏠 **Heimdall** — your homepage. Tiles for every other app, so you don't remember port numbers.
+- 🚦 **Caddy** — the traffic cop. Routes requests to the right app. You never click on it.
+- 🔐 **Authelia** — the login page (tunnel mode). 2FA + group permissions.
+- 🎛️ **Portainer** — a Docker web GUI for when you want to look at logs or restart something.
 
-- 🏠 **Heimdall** — your homepage. One web page with tiles for every other
-  app, so you don't have to remember port numbers. The first thing you'll
-  bookmark.
-- 🚦 **Caddy** — the traffic cop. Routes incoming web requests to the right
-  app. You never click on it; it just works in the background.
-- 🔐 **Authelia** — the login page. When you publish your stack online
-  (tunnel mode), this is what people log in through. Adds 2FA, group
-  permissions, etc. Idle in local-only mode.
-- 🎛️ **Portainer** — a web GUI for managing all the Docker containers.
-  Useful when you want to look at logs or restart something without
-  using the command line.
+### 🤖 AI — local LLMs, private search, agents, automation
 
-### 🤖 AI — local LLMs, private search, automations
-
-- 🧠 **Ollama** — the engine that runs AI language models on your own
-  computer. The chat / search / research apps below all talk to it.
-  Nothing ever leaves your machine.
-- 💬 **Open WebUI** — a ChatGPT-style chat window for talking to the local
-  AI. The main app you'll use in this category.
-- 🔍 **SearXNG** — a private search engine. Pulls results from Google /
-  Bing / DuckDuckGo without telling them who you are.
-- 📚 **Local Deep Research** — an AI research assistant. Give it a topic
-  and it reads dozens of web pages and writes you a structured report.
-  Like a one-person research team that works overnight.
-- ❓ **Vane** — a "Perplexity-style" answer engine. Type a question, get a
-  short answer with sources. Faster than chat for one-shot lookups.
-- 🪽 **Hermes** — NousResearch's self-improving agent. Talks to Ollama for
-  its brain (OmniCoder 2 by default), keeps a persistent memory across
-  sessions, learns and creates its own skills. Comes paired with the
-  **Hermes Workspace** web UI (chat, memory browser, terminal, skills
-  manager, multi-agent swarm view). Login is gated by
-  `HERMES_WORKSPACE_PASSWORD`, auto-generated and saved to `.env`.
-- 🔗 **n8n** — a drag-and-drop automation builder. You wire up blocks
-  ("when an email arrives → save the attachment → ask the AI to
-  summarise it → text me the result") into workflows that run on a
-  schedule.
+- 🧠 **Ollama** — the engine running AI language models on your own hardware. Everything below talks to it.
+- 💬 **Open WebUI** — a ChatGPT-style chat window. The main app you'll open.
+- 🔍 **SearXNG** — a private metasearch engine. Google / Bing / DuckDuckGo results without the tracking.
+- 📚 **Local Deep Research** — give it a topic, get a structured report. Like a researcher that works overnight.
+- ❓ **Vane** — a Perplexity-style answer engine. One-shot questions with sources.
+- 🪽 **Hermes** — NousResearch's self-improving agent with persistent memory + skill creation, paired with the **Hermes Workspace** web UI (chat, memory browser, terminal, swarm view). Default model: OmniCoder 2.
+- 🔗 **n8n** — drag-and-drop automation. *"When an email arrives → save the attachment → ask the AI to summarise it → text me the result."*
 
 ### 🎬 MEDIA — your own Netflix / Spotify / Google Photos
 
-- 🎥 **Jellyfin** — your own Netflix for movies and TV. Reads from the
-  Movies + TV Shows folders you set in the wizard, streams to your TV,
-  phone, or browser. Free, no subscription.
-- 🎵 **Navidrome** — your own Spotify for music. Reads from your Music
-  folder, streams to phone and browser. Beautiful mobile apps available.
-- 📸 **Immich** — your own Google Photos. Auto-backup from your phone,
-  face / object recognition, search by what's IN the photo, share
-  albums. Replaces Google Photos completely.
+- 🎥 **Jellyfin** — Netflix for your movies and TV. Reads from the folder you set, streams to TV / phone / browser.
+- 🎵 **Navidrome** — Spotify for your music. Same idea. Beautiful mobile apps available.
+- 📸 **Immich** — Google Photos replacement. Phone auto-backup, face / object recognition, search by what's *in* the photo.
 
-### 🛠️ PRODUCTIVITY — utilities and one-off tools
+### 🛠️ PRODUCTIVITY — utilities
 
-- 📂 **Filebrowser** — a web file explorer for the folders you exposed
-  (movies, music, photos, downloads). Upload, rename, move files from
-  any browser without remoting into the machine.
-- 🧰 **Omni Tools** — a grab-bag of small web utilities. Resize images,
-  convert file formats, generate QR codes, base64-encode, etc. Like
-  the "online tools" sites you've used, but running locally so nothing
-  uploads anywhere.
-- 🧅 **Tor Browser** — a full Tor Browser running in your browser tab.
-  Opens onion sites and routes through Tor without installing anything
-  on your machine. One click from Heimdall.
+- 📂 **Filebrowser** — web file explorer for the folders you exposed. Upload / rename / move from any browser.
+- 🧰 **Omni Tools** — local versions of every "online tool" site (resize, convert, QR, base64, …) — nothing leaves your machine.
+- 🧅 **Tor Browser** — full Tor Browser in a browser tab. One click from Heimdall.
 
-### 🌐 ONLINE-ONLY — only runs in tunnel mode
+### 🌐 ONLINE-ONLY — only in tunnel mode
 
-- ☁️ **Cloudflared** — the secure connector to your Cloudflare account.
-  Lets people on the internet reach `chat.yourdomain.com`,
-  `movie.yourdomain.com`, etc. without you opening any router ports.
-  Excluded automatically in local-only mode.
+- ☁️ **Cloudflared** — connects your stack to Cloudflare so people can reach `chat.yourdomain.com`, `movie.yourdomain.com`, etc. without you opening router ports.
 
 ---
 
-## 🗺️ What's running
+## 🗺️ Service URLs (local mode)
 
-| Service          | Local URL                  | Notes |
-| ---------------- | -------------------------- | --- |
-| Heimdall         | <http://localhost:8080>    | Start page / dashboard |
-| Authelia         | <http://localhost:9091>    | SSO (only useful in tunnel mode) |
-| Caddy            | <http://localhost:80>      | Reverse proxy (tunnel mode only) |
-| Jellyfin         | <http://localhost:9014>    | Movies & TV |
-| Navidrome        | <http://localhost:4533>    | Music streaming |
-| Immich           | <http://localhost:2283>    | Photo + video library (with face/object recognition; HW-accelerated transcoding + ML when GPU is detected) |
-| Filebrowser      | <http://localhost:8095>    | File manager |
-| Open WebUI       | <http://localhost:9002>    | LLM frontend |
-| Ollama API       | <http://localhost:11434>   | LLM backend |
-| SearXNG          | <http://localhost:8031>    | Metasearch (private) |
-| Local Deep Research | <http://localhost:5000> | AI research assistant |
-| Vane             | <http://localhost:3000>    | AI answer engine |
-| Hermes Workspace | <http://localhost:3030>    | Web UI for the Hermes self-improving agent |
-| Hermes Gateway   | <http://localhost:8642>    | Hermes agent HTTP API |
-| n8n              | <http://localhost:5678>    | Workflow automation |
-| Portainer        | <http://localhost:9000>    | Container management |
-| Tor Browser      | <http://tor.localhost/>    | Zero-click auto-login through Caddy (no kasm prompt). Direct kasm at <https://localhost:6901> still works but asks for the basic-auth password. |
-| Omni Tools       | <http://localhost:8890>    | Misc utilities |
+| Service | URL | Service | URL |
+| --- | --- | --- | --- |
+| Heimdall | <http://localhost:8080> | Open WebUI | <http://localhost:9002> |
+| Jellyfin | <http://localhost:9014> | SearXNG | <http://localhost:8031> |
+| Navidrome | <http://localhost:4533> | Local Deep Research | <http://localhost:5000> |
+| Immich | <http://localhost:2283> | Vane | <http://localhost:3000> |
+| Filebrowser | <http://localhost:8095> | Hermes Workspace | <http://localhost:3030> |
+| Omni Tools | <http://localhost:8890> | Hermes Gateway | <http://localhost:8642> |
+| Tor Browser | <http://tor.localhost/> | n8n | <http://localhost:5678> |
+| Portainer | <http://localhost:9000> | Ollama API | <http://localhost:11434> |
 
-**Tor Browser auto-login** — Caddy injects the kasm basic-auth header on
-proxied requests AND redirects bare `/` to the auto-connect URL, so the
-kasm login form never appears:
-
-- **Local**: `http://tor.localhost/` — `*.localhost` resolves to 127.0.0.1
-  on Windows 10+, macOS, and Linux without any hosts-file edits.
-- **Tunnel**: `https://tor.<your-domain>/` — same chain, gated by Authelia
-  SSO first.
-
-Hitting `https://localhost:6901/` directly still works but bypasses Caddy,
-so kasm shows its native basic-auth prompt — use `tor.localhost` instead.
-
-In tunnel mode each service is also reachable behind Authelia at e.g.
-`https://chat.example.com`, `https://hub.example.com`, etc. — the
-subdomain map is in `files/persistent-storage/caddy/Caddyfile.tmpl` and
-`files/persistent-storage/authelia/configuration.yml.tmpl`.
+In tunnel mode everything also gets a subdomain on your own domain (`chat.example.com`, `movie.example.com`, …) gated by Authelia SSO.
 
 ---
 
-## 🔑 Configuring Authelia users
+## 🧠 The recommended LLMs
 
-After the first run, the wizard copies `users_database.yml.example` to
-`users_database.yml` if it's not already there. **The placeholder password
-hash in that file is invalid on purpose** — Authelia will refuse to start
-until you replace it. Generate a real hash with:
+The wizard auto-installs two starter models so you're not staring at an empty chat box. Two heavier "monsters" sit in `recommended_models.txt` for when you have the hardware — pull them from `[4] LLM Manager` in the launcher.
 
-```bat
-docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password "your-strong-password"
-```
+### 📦 Starters (auto-installed, ~5 GB each, runs on almost any GPU/CPU)
 
-Then paste the resulting `$argon2id$...` string into `users_database.yml`
-in place of `__ARGON2_HASH_REPLACE_ME__`, and `docker restart Authelia`.
+- **🌟 `huihui_ai/gemma-4-abliterated:e4b-q4_K`** — General-purpose, uncensored.
+  Google's Gemma 4 (4B) with the refusal layer surgically removed (no retraining, just no more "I can't help with that"). Daily-driver for chat / writing / Q&A.
+- **👨‍💻 `carstenuhlig/omnicoder-2-9b:q4_k_m`** — Agentic + coding.
+  9B fine-tune built for code generation and tool-use. Use for anything code-shaped or when you want the model to plan + execute multi-step work. Pairs cleanly with n8n's AI nodes.
 
----
+### 💪 Monsters (manual pull, ~16-24 GB VRAM)
 
-## 💾 Storage layout
+- **🦣 `iaprofesseur/SuperGemma4-26b-uncensored-Q4`** — 26B uncensored Gemma 4. Same family as the small starter, much bigger brain. For long-form writing / sustained reasoning.
+- **🐲 `fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4`** — 35B Qwen MoE, aggressive uncensored finetune. **MoE** = 35B total params, only ~3B *active* per token — runs at the speed of a small model with the reasoning of a huge one. The closest you'll get to a frontier model on your own GPU.
 
-The wizard asks for four user-facing media paths and writes them to `.env`
-as absolute paths (forward-slashed for docker compose):
-
-```
-${MOVIES_PATH}    -> /media/movies   (Jellyfin)  and /srv/movies   (Filebrowser)
-${TV_SHOWS_PATH}  -> /media/tv       (Jellyfin)  and /srv/tv-shows (Filebrowser)
-${MUSIC_PATH}     -> /music          (Navidrome) and /srv/music    (Filebrowser)
-${DOWNLOADS_PATH} -> /home/kasm-user/Downloads (Tor Browser) and /srv/downloads (Filebrowser)
-```
-
-`PERSISTENT_STORAGE` (default `./persistent-storage`, resolved relative to
-`files/`) holds container configs and small databases that need to survive
-restarts.
+> **Glossary** — *VRAM*: your GPU's memory budget. *Quantization* (`q4_K`, `Q4_K_M`): how the weights are compressed; smaller = faster, slight quality cost. *Abliterated*: refusal removed via weight surgery; the model isn't retrained or dumbed down. *MoE*: many "experts" inside; only a couple activate per token, so total params >> active params.
 
 ---
 
-## 📁 Files & folders
+## ⚙️ Notes
 
-```
-.
-├── WINDOWS-HOMELAB-MANAGER.BAT                  # Windows entry point (menu: first-run / start / stop / LLM mgr)
-├── MAC-HOMELAB-MANAGER.COMMAND                  # macOS entry point (same menu)
-├── README.md                                    # this file
-└── files/                                       # everything else lives here
-    ├── .env.example                             # template the wizard copies to files/.env
-    ├── docker-compose.yml                       # full stack (profiles: ai, media, tunnel)
-    ├── recommended_models.txt                   # LOW/HIGH VRAM model picks for the wizard + LLM_MANAGER
-    ├── scripts/
-    │   └── setup.ps1                            # the wizard (also handles -StartOnly)
-    └── persistent-storage/
-        ├── caddy/Caddyfile.tmpl                 # rendered to Caddyfile at startup
-        ├── authelia/
-        │   ├── configuration.yml.tmpl           # rendered to configuration.yml
-        │   └── users_database.yml.example       # copied to users_database.yml on first run
-        └── do-not-delete/
-            ├── searxng/{settings.yml.tmpl, limiter.toml, uwsgi.ini}
-            └── filebrowser/settings.json
-```
-
-The rendered runtime files (`Caddyfile`, `configuration.yml`,
-`settings.yml`, `users_database.yml`, `.env`) are gitignored — only the
-templates are tracked.
+- **Linux containers run on Apple Silicon** — every image is multi-arch (`linux/arm64`). Docker on Mac can't pass Metal through to containers, so the wizard offers a "**Native Ollama**" mode that points Open WebUI / LDR / Vane at the host's Metal-accelerated `brew install ollama`.
+- **GPU acceleration is pluggable** — the wizard detects NVIDIA / AMD / CPU and layers the right compose override on top. Same detection drives Immich's NVENC / VAAPI transcoding + ML acceleration.
+- **Authelia admin password** is auto-generated and stored in `files/.env` as `AUTHELIA_ADMIN_PASSWORD` (username: `admin`). Same pattern for Hermes Workspace (`HERMES_WORKSPACE_PASSWORD`).
+- **Re-configure later** — open the launcher → `[1] First-Run Setup` again. Existing data survives.
+- **Manual stop** — `cd files && docker compose down`. The launcher's `[3]` does this + a by-`container_name` fallback so containers from older installs are also caught.
 
 ---
 
-## 🩹 Troubleshooting
+## 🔒 Security
 
-- **`Docker engine did not come up within 5 minutes`** — on a freshly auto-installed
-  Docker Desktop, Windows usually needs a sign-out or reboot to finish setting
-  up WSL2. Sign out / reboot, launch Docker Desktop manually so it can finish
-  first-run setup, then run `WINDOWS-HOMELAB-MANAGER.BAT` and pick **[2] Start Stack**.
-- **`docker engine is not running`** — start Docker Desktop and re-run.
-- **`docker compose up` fails on the `cloudflared` service** — the token
-  is wrong, expired, or not for this account. Regenerate at
-  <https://dash.cloudflare.com/>, then open the manager and pick **[1] First-Run Setup** again.
-- **Authelia keeps restarting** — most likely you forgot to replace
-  `__ARGON2_HASH_REPLACE_ME__` in `users_database.yml`. See the section
-  above.
-- **Ollama can't see the GPU** — make sure NVIDIA drivers are installed
-  on the host and that "Use the WSL 2 based engine" + "Enable GPU support"
-  are on in Docker Desktop. If you don't have an NVIDIA GPU, change
-  `OLLAMA_GPU_DRIVER=nvidia` to something else or remove the `deploy`
-  block from the `ollama` service.
+- Real `.env`, `users_database.yml`, and rendered configs (`Caddyfile`, `configuration.yml`, `settings.yml`) are gitignored — they contain tokens, secrets, encryption keys, and password hashes. Never commit them.
+- In tunnel mode every protected route requires a valid Authelia session (group `admins` by default). Only `auth.${DOMAIN}` and `c.${DOMAIN}` bypass.
+- The Hermes dashboard sits on the internal docker network only (not host-exposed) — it surfaces API keys without auth; only the workspace reaches it.
 
 ---
 
-## 🔒 Security notes
+## 🙏 Credits
 
-- Real `.env`, `users_database.yml`, and rendered `Caddyfile` /
-  `configuration.yml` / `settings.yml` files are gitignored. Do not commit
-  them — they contain tunnel tokens, JWT secrets, encryption keys, and
-  password hashes.
-- The `tor-browser` container's password comes from `TOR_VNC_PW` in
-  `.env` (the wizard generates a random one on first run). The same
-  password is baked into the Caddy redirect that auto-logs you in, so
-  you never have to type it. If you publish `tor.${DOMAIN}` over the
-  tunnel, the Authelia rule (`group: admins`) is what actually keeps it
-  private — anyone with the link still hits SSO before kasm.
-- In tunnel mode every protected route requires a valid Authelia session
-  (group `admins` by default). Only `auth.${DOMAIN}` and `c.${DOMAIN}`
-  bypass auth — review `configuration.yml.tmpl` if you change the routing.
-
----
-
-## 🧠 The recommended LLMs (and the why behind each)
-
-When you finish the first-run wizard with the AI stack enabled, the wizard
-auto-installs **two starter models** so you're never staring at an empty chat
-box. There are also **two "monster" models** you can grab later when you have
-the hardware. Here's what each one is for and why it earned a spot.
-
-### 📦 Starter models (auto-installed at Step 5) — low VRAM, ~5 GB each
-
-**🌟 `huihui_ai/gemma-4-abliterated:e4b-q4_K`** — General-purpose, uncensored
-
-- **What it is:** Google's Gemma 4 (4B params, q4_K quantization), with the
-  refusal layer **abliterated** — a surgical edit that removes the model's
-  built-in "I can't help with that" reflex without retraining. The result is
-  the same smart Gemma 4 you'd expect, but it answers freely.
-- **Why this one:** Tiny enough to run on almost any GPU (or even a fast
-  CPU), low first-token latency, strong general reasoning for its size. The
-  best "ready for anything" default for chat, writing, brainstorming,
-  summaries, Q&A.
-- **When to use it:** Your daily driver in Open WebUI. Pick this for
-  everyday chat, drafting emails, asking questions, casual writing.
-
-**👨‍💻 `carstenuhlig/omnicoder-2-9b:q4_k_m`** — Agentic + coding
-
-- **What it is:** OmniCoder 2 (9B params, q4_K_M quantization), a fine-tune
-  built specifically for code generation and **agentic** tasks — meaning
-  the model is good at making decisions, calling tools, and planning
-  multi-step actions.
-- **Why this one:** Bigger than the Gemma starter (~5-6 GB), but punches
-  above its weight on programming + tool-use benchmarks. Pairs cleanly
-  with n8n's AI agent nodes if you want to wire it into automations.
-- **When to use it:** Anything code-shaped (write me a script, debug this
-  function, refactor that file), or any time you want the model to plan +
-  execute multi-step work instead of just answering once.
-
-### 💪 Monster models (grab when you have the hardware) — high VRAM, ~16-24 GB
-
-Both already live in `files/recommended_models.txt` under the **HIGH** tier.
-Pull them via the LLM Manager menu: **WINDOWS-HOMELAB-MANAGER.BAT** (or
-**MAC-HOMELAB-MANAGER.COMMAND**) → `[4] LLM Manager` → `[2] Pull a
-Recommended/Custom Model` → `[1] Recommended Models`.
-
-**🦣 `iaprofesseur/SuperGemma4-26b-uncensored-Q4`** — 26B Gemma, uncensored
-
-- **What it is:** A 26-billion-parameter Gemma 4 variant, uncensored, in
-  Q4 quantization (~14-16 GB on disk; ~16-18 GB VRAM in use).
-- **Why this one:** Substantially smarter than the 4B starter on hard
-  reasoning, long-form writing, and nuanced questions. Same uncensored
-  Gemma family, so you keep the "answers anything" property but get a much
-  bigger brain behind it.
-- **When to use it:** When the small Gemma feels too shallow for your
-  topic. Long essays, research summaries, anything that needs sustained
-  reasoning across many paragraphs.
-
-**🐲 `fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4`** — 35B Qwen MoE, aggressive uncensored finetune
-
-- **What it is:** Alibaba's Qwen 3.6 architecture, 35 billion total params
-  but **MoE (Mixture-of-Experts) with 3 billion *active*** at any one
-  moment. It runs at the speed of a small model while reasoning at the
-  capacity of a huge one. This finetune is uncensored and tuned for
-  direct, no-hedging output.
-- **Why this one:** The heaviest hitter on the recommended list. MoE keeps
-  inference speed reasonable on consumer GPUs (24 GB+); the 35B total
-  parameter count gives top-tier reasoning quality among open models in
-  this weight class.
-- **When to use it:** The bar where you'd otherwise reach for a hosted
-  frontier model. Hard reasoning, creative writing, complex code
-  refactors, deep technical Q&A.
-
-### 🔬 What do those scary words mean?
-
-- **VRAM** = the dedicated memory on your GPU. Bigger models need more.
-  ~4 GB VRAM is enough for the starter models; ~16-24 GB VRAM unlocks the
-  monsters. On Apple Silicon (unified memory) the same numbers apply but
-  they come out of your overall RAM pool.
-- **Quantization** (`q4_K`, `Q4_K_M`, etc. in tags) = how the model's
-  numbers are compressed. `q4` = 4-bit weights, smallest + fastest, small
-  quality cost. `q8` = 8-bit, larger + slightly smarter. `Q4_K_M` is a
-  "K-quant medium" variant — slightly higher quality than plain q4 at
-  almost the same size.
-- **Abliterated** = the refusal behaviour has been surgically removed from
-  the model's weights. The model itself isn't retrained or made dumber;
-  it just stops saying "I can't help with that."
-- **MoE (Mixture-of-Experts)** = the model has many "expert" sub-networks
-  inside; only a couple activate per token. So `35B-A3B` means 35B total
-  parameters but only ~3B are *active* per forward pass — you get the
-  *reasoning depth* of 35B at roughly the *inference cost* of 3B. Great
-  trade-off when you have RAM but not unlimited compute.
+Built on the shoulders of [Jellyfin](https://jellyfin.org), [Navidrome](https://www.navidrome.org), [Immich](https://github.com/immich-app/immich), [Filebrowser](https://github.com/filebrowser/filebrowser), [Ollama](https://ollama.com), [Open WebUI](https://github.com/open-webui/open-webui), [SearXNG](https://github.com/searxng/searxng), [Local Deep Research](https://github.com/LearningCircuit/local-deep-research), [Vane](https://github.com/itzcrazykns1337/Vane), [NousResearch Hermes Agent](https://github.com/NousResearch/hermes-agent), [Hermes Workspace](https://github.com/outsourc-e/hermes-workspace), [n8n](https://n8n.io), [Caddy](https://caddyserver.com), [Authelia](https://www.authelia.com), [Cloudflared](https://github.com/cloudflare/cloudflared), [Portainer](https://www.portainer.io), [Heimdall](https://heimdall.site), and [KasmVNC Tor Browser](https://hub.docker.com/r/kasmweb/tor-browser).
