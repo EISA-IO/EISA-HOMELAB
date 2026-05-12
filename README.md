@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="GITHUB-LOGO.png" alt="EISA Homelab" width="900">
+</p>
+
 # EISA Homelab
 
 > **The ultimate private, no-tracking homelab stack.**

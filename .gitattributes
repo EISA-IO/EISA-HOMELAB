@@ -15,5 +15,13 @@
 *.command text eol=lf
 *.sh      text eol=lf
 
+# Images / binaries — don't let "text=auto" try to normalize line endings.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+
 # Everything else: let git auto-detect text vs binary.
 * text=auto
