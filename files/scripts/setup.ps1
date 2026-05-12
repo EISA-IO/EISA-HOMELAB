@@ -617,7 +617,7 @@ function Invoke-Wizard {
         # On macOS we offer a fifth option: run Ollama NATIVELY on the host
         # (Homebrew or ollama.app) so it uses Metal. Docker on Mac can't
         # pass Metal through to containers, so this is the only way to get
-        # real GPU acceleration on Apple Silicon (M1 Ultra, M2 Max, etc).
+        # real GPU acceleration on Apple Silicon.
         if ($script:OS -eq 'Mac') {
             $gpuPick = Ask-Choice @(
                 [pscustomobject]@{

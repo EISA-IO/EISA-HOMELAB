@@ -5,10 +5,10 @@
 # 'native' (or when state.gpuMode == 'native').
 #
 # Why: Docker Desktop on macOS runs containers inside a Linux VM that can't
-# reach Apple's Metal GPU. Even on a 64-GPU-core M1 Ultra, the in-container
-# Ollama is CPU-only. Installing Ollama natively on the Mac (Homebrew, DMG,
-# whatever) lets it use Metal directly - orders of magnitude faster for LLM
-# inference.
+# reach Apple's Metal GPU. Even on the highest-end Apple Silicon chips the
+# in-container Ollama is CPU-only. Installing Ollama natively on the Mac
+# (Homebrew, DMG, whatever) lets it use Metal directly - orders of magnitude
+# faster for LLM inference.
 #
 # Requirements on the host:
 #   - macOS with Apple Silicon (M1/M2/M3/M4 family)
@@ -29,7 +29,7 @@
 #
 # Note: Immich's machine-learning service still runs CPU-only on Mac (no
 # Metal-enabled image upstream). Jellyfin transcoding is also CPU-only.
-# Both are still fast on M1 Ultra's 20-core CPU; just not GPU-accelerated.
+# Both are still fast on modern Apple Silicon CPUs; just not GPU-accelerated.
 # =============================================================================
 services:
   # Take the ollama service out of the active 'ai' profile entirely.

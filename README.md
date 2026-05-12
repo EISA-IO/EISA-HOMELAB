@@ -324,35 +324,6 @@ templates are tracked.
 
 ---
 
-## 🍎 Running on a Mac Studio M1 Ultra (or any Apple Silicon)
-
-The full stack runs cleanly on Apple Silicon — **every image in the compose
-ships a `linux/arm64` manifest** so Docker Desktop on Mac pulls native ARM
-builds with no emulation. M1 Ultra's 20-core CPU and 128 GB unified memory
-are more than enough to host all 21 containers comfortably.
-
-**GPU caveat:** Docker Desktop on macOS runs containers inside a Linux VM
-that has **no access to Metal**. This is a Docker Desktop limitation, not
-something compose can fix. The implication:
-
-| Workload | What happens on Mac |
-| --- | --- |
-| **Ollama (LLM inference)** | The wizard's GPU step auto-detects this and offers a **NATIVE Ollama** option. With this picked, the in-container `ollama` service is excluded; Open WebUI, Local Deep Research, and Vane are repointed at `http://host.docker.internal:11434` where Mac-native Ollama serves them via Metal. Setup: `brew install ollama && brew services start ollama` (or grab `ollama.app` from <https://ollama.com>). On M1 Ultra this is orders of magnitude faster than CPU inference. |
-| **Immich machine learning** | Always CPU on Mac (no Metal-enabled image upstream). Face/object/clip-search inference works fine on M1 Ultra's CPU; just not GPU-accelerated. |
-| **Jellyfin transcoding** | Always CPU on Mac. Software ffmpeg is plenty fast on M1 Ultra for most content (4K HDR might struggle). |
-
-**Recommended Docker Desktop settings** (Settings → Resources):
-
-- **CPUs**: at least 8 (M1 Ultra has 20 — give Docker 12+ if you want headroom)
-- **Memory**: at least 16 GB (with 128 GB unified, 24-32 GB to Docker is fine)
-- **Disk**: 60+ GB for image storage (Immich's ML model image alone is large)
-- **VirtioFS** file sharing (faster than legacy gRPC FUSE for the media binds)
-
-**First-time setup is identical to Windows** — `./MAC-HOMELAB-MANAGER.COMMAND`
-opens the same menu and runs the same self-healing wizard.
-
----
-
 ## 🩹 Troubleshooting
 
 - **`Docker engine did not come up within 5 minutes`** — on a freshly auto-installed
