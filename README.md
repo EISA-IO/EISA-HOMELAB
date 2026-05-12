@@ -360,3 +360,94 @@ templates are tracked.
 - In tunnel mode every protected route requires a valid Authelia session
   (group `admins` by default). Only `auth.${DOMAIN}` and `c.${DOMAIN}`
   bypass auth — review `configuration.yml.tmpl` if you change the routing.
+
+---
+
+## 🧠 The recommended LLMs (and the why behind each)
+
+When you finish the first-run wizard with the AI stack enabled, the wizard
+auto-installs **two starter models** so you're never staring at an empty chat
+box. There are also **two "monster" models** you can grab later when you have
+the hardware. Here's what each one is for and why it earned a spot.
+
+### 📦 Starter models (auto-installed at Step 5) — low VRAM, ~5 GB each
+
+**🌟 `huihui_ai/gemma-4-abliterated:e4b-q4_K`** — General-purpose, uncensored
+
+- **What it is:** Google's Gemma 4 (4B params, q4_K quantization), with the
+  refusal layer **abliterated** — a surgical edit that removes the model's
+  built-in "I can't help with that" reflex without retraining. The result is
+  the same smart Gemma 4 you'd expect, but it answers freely.
+- **Why this one:** Tiny enough to run on almost any GPU (or even a fast
+  CPU), low first-token latency, strong general reasoning for its size. The
+  best "ready for anything" default for chat, writing, brainstorming,
+  summaries, Q&A.
+- **When to use it:** Your daily driver in Open WebUI. Pick this for
+  everyday chat, drafting emails, asking questions, casual writing.
+
+**👨‍💻 `carstenuhlig/omnicoder-2-9b:q4_k_m`** — Agentic + coding
+
+- **What it is:** OmniCoder 2 (9B params, q4_K_M quantization), a fine-tune
+  built specifically for code generation and **agentic** tasks — meaning
+  the model is good at making decisions, calling tools, and planning
+  multi-step actions.
+- **Why this one:** Bigger than the Gemma starter (~5-6 GB), but punches
+  above its weight on programming + tool-use benchmarks. Pairs cleanly
+  with n8n's AI agent nodes if you want to wire it into automations.
+- **When to use it:** Anything code-shaped (write me a script, debug this
+  function, refactor that file), or any time you want the model to plan +
+  execute multi-step work instead of just answering once.
+
+### 💪 Monster models (grab when you have the hardware) — high VRAM, ~16-24 GB
+
+Both already live in `files/recommended_models.txt` under the **HIGH** tier.
+Pull them via the LLM Manager menu: **WINDOWS-HOMELAB-MANAGER.BAT** (or
+**MAC-HOMELAB-MANAGER.COMMAND**) → `[4] LLM Manager` → `[2] Pull a
+Recommended/Custom Model` → `[1] Recommended Models`.
+
+**🦣 `iaprofesseur/SuperGemma4-26b-uncensored-Q4`** — 26B Gemma, uncensored
+
+- **What it is:** A 26-billion-parameter Gemma 4 variant, uncensored, in
+  Q4 quantization (~14-16 GB on disk; ~16-18 GB VRAM in use).
+- **Why this one:** Substantially smarter than the 4B starter on hard
+  reasoning, long-form writing, and nuanced questions. Same uncensored
+  Gemma family, so you keep the "answers anything" property but get a much
+  bigger brain behind it.
+- **When to use it:** When the small Gemma feels too shallow for your
+  topic. Long essays, research summaries, anything that needs sustained
+  reasoning across many paragraphs.
+
+**🐲 `fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4`** — 35B Qwen MoE, aggressive uncensored finetune
+
+- **What it is:** Alibaba's Qwen 3.6 architecture, 35 billion total params
+  but **MoE (Mixture-of-Experts) with 3 billion *active*** at any one
+  moment. It runs at the speed of a small model while reasoning at the
+  capacity of a huge one. This finetune is uncensored and tuned for
+  direct, no-hedging output.
+- **Why this one:** The heaviest hitter on the recommended list. MoE keeps
+  inference speed reasonable on consumer GPUs (24 GB+); the 35B total
+  parameter count gives top-tier reasoning quality among open models in
+  this weight class.
+- **When to use it:** The bar where you'd otherwise reach for a hosted
+  frontier model. Hard reasoning, creative writing, complex code
+  refactors, deep technical Q&A.
+
+### 🔬 What do those scary words mean?
+
+- **VRAM** = the dedicated memory on your GPU. Bigger models need more.
+  ~4 GB VRAM is enough for the starter models; ~16-24 GB VRAM unlocks the
+  monsters. On Apple Silicon (unified memory) the same numbers apply but
+  they come out of your overall RAM pool.
+- **Quantization** (`q4_K`, `Q4_K_M`, etc. in tags) = how the model's
+  numbers are compressed. `q4` = 4-bit weights, smallest + fastest, small
+  quality cost. `q8` = 8-bit, larger + slightly smarter. `Q4_K_M` is a
+  "K-quant medium" variant — slightly higher quality than plain q4 at
+  almost the same size.
+- **Abliterated** = the refusal behaviour has been surgically removed from
+  the model's weights. The model itself isn't retrained or made dumber;
+  it just stops saying "I can't help with that."
+- **MoE (Mixture-of-Experts)** = the model has many "expert" sub-networks
+  inside; only a couple activate per token. So `35B-A3B` means 35B total
+  parameters but only ~3B are *active* per forward pass — you get the
+  *reasoning depth* of 35B at roughly the *inference cost* of 3B. Great
+  trade-off when you have RAM but not unlimited compute.
