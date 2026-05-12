@@ -1192,7 +1192,23 @@ function Install-FirstLlm {
     }
 
     G ''
-    Dim "  Want different / more models? Open $managerName."
+    Dim '  ----------------------------------------------------------------'
+    G  '  Want a MONSTER uncensored model?'
+    Dim '  ----------------------------------------------------------------'
+    Dim '  These take much more VRAM (~16-24 GB) but are noticeably smarter'
+    Dim '  than the starters. Pull from the LLM Manager when you have the'
+    Dim '  hardware:'
+    Dim ''
+    Dim '    iaprofesseur/SuperGemma4-26b-uncensored-Q4'
+    Dim '      26B-param Gemma 4 variant. Uncensored, strong reasoning,'
+    Dim '      great for long-form writing and tougher Q&A.'
+    Dim ''
+    Dim '    fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4'
+    Dim '      35B-param Qwen 3.6 MoE (A3B active). Uncensored aggressive'
+    Dim '      finetune; the heaviest-hitter on the recommended list.'
+    Dim ''
+    Dim "  Pull them from $managerName -> [4] LLM Manager -> [2] Pull a"
+    Dim '  Recommended/Custom Model. Both are already in recommended_models.txt.'
 }
 
 # ---------------------------------------------------------------------------
