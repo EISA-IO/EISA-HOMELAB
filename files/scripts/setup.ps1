@@ -613,40 +613,72 @@ function Invoke-Wizard {
     if ($hasAi) {
         $detected = Get-OllamaGpuMode -OS $script:OS
         Step 'Step 3b — GPU acceleration for Ollama' "We auto-detected your GPU as: $($detected.ToUpper()). You can override below if needed."
-        $gpuPick = Ask-Choice @(
-            [pscustomobject]@{
-                Label = "Use auto-detected: $($detected.ToUpper())"
-                Hint  = @(
-                    'Recommended. Trust the detection unless you know better.'
-                )
+
+        # On macOS we offer a fifth option: run Ollama NATIVELY on the host
+        # (Homebrew or ollama.app) so it uses Metal. Docker on Mac can't
+        # pass Metal through to containers, so this is the only way to get
+        # real GPU acceleration on Apple Silicon (M1 Ultra, M2 Max, etc).
+        if ($script:OS -eq 'Mac') {
+            $gpuPick = Ask-Choice @(
+                [pscustomobject]@{
+                    Label = 'NATIVE Ollama on macOS (Metal-accelerated)  -- recommended for Apple Silicon'
+                    Hint  = @(
+                        'Skips the in-container ollama. Open WebUI, Local Deep Research,'
+                        'and Vane will point at http://host.docker.internal:11434 so'
+                        'Mac-native Ollama (using Metal) serves them. Massive speedup'
+                        'on M1/M2/M3 vs containerised CPU.'
+                        '  Setup: brew install ollama && brew services start ollama'
+                        '  Verify: curl http://localhost:11434/api/tags'
+                    )
+                }
+                [pscustomobject]@{
+                    Label = 'CPU only (containerised ollama)'
+                    Hint  = @(
+                        'Runs ollama inside Docker on Mac. Works without any host'
+                        'install but is much slower since the container cannot reach Metal.'
+                    )
+                }
+            )
+            $gpuMode = switch ($gpuPick) {
+                1 { 'native' }
+                2 { 'cpu' }
             }
-            [pscustomobject]@{
-                Label = 'NVIDIA (CUDA)'
-                Hint  = @(
-                    'Requires NVIDIA driver + Docker Desktop "Enable GPU support",'
-                    'or on Linux: nvidia-container-toolkit installed.'
-                )
+        } else {
+            $gpuPick = Ask-Choice @(
+                [pscustomobject]@{
+                    Label = "Use auto-detected: $($detected.ToUpper())"
+                    Hint  = @(
+                        'Recommended. Trust the detection unless you know better.'
+                    )
+                }
+                [pscustomobject]@{
+                    Label = 'NVIDIA (CUDA)'
+                    Hint  = @(
+                        'Requires NVIDIA driver + Docker Desktop "Enable GPU support",'
+                        'or on Linux: nvidia-container-toolkit installed.'
+                    )
+                }
+                [pscustomobject]@{
+                    Label = 'AMD (ROCm) - Linux only'
+                    Hint  = @(
+                        'Requires ROCm-compatible AMD GPU + ROCm drivers on a Linux host.'
+                        'Docker Desktop on Windows does NOT support AMD passthrough.'
+                    )
+                }
+                [pscustomobject]@{
+                    Label = 'CPU only'
+                    Hint  = @(
+                        'Works on every machine but slower. Use this if your GPU'
+                        'is unsupported or you want predictable resource use.'
+                    )
+                }
+            )
+            $gpuMode = switch ($gpuPick) {
+                1 { $detected }
+                2 { 'nvidia' }
+                3 { 'amd' }
+                4 { 'cpu' }
             }
-            [pscustomobject]@{
-                Label = 'AMD (ROCm) - Linux only'
-                Hint  = @(
-                    'Requires ROCm-compatible AMD GPU + ROCm drivers on a Linux host.'
-                    'Docker Desktop on Windows does NOT support AMD passthrough.'
-                )
-            }
-            [pscustomobject]@{
-                Label = 'CPU only'
-                Hint  = @(
-                    'Works on every machine but slower. Default for macOS (Docker'
-                    'on Mac cannot expose Metal to containers).'
-                )
-            }
-        )
-        $gpuMode = switch ($gpuPick) {
-            1 { $detected }
-            2 { 'nvidia' }
-            3 { 'amd' }
-            4 { 'cpu' }
         }
         Ok "GPU mode: $($gpuMode.ToUpper())"
     }
@@ -953,7 +985,7 @@ function Start-Stack {
     param(
         [string[]]$Profiles,
         [bool]$UseTunnel,
-        [string]$GpuMode = 'cpu'   # 'cpu' (default) | 'nvidia' | 'amd'
+        [string]$GpuMode = 'cpu'   # 'cpu' | 'nvidia' | 'amd' | 'native' (Mac, Metal)
     )
     $effective = @($Profiles)
     if ($UseTunnel) { $effective += 'tunnel' }
@@ -962,6 +994,7 @@ function Start-Stack {
     switch ($GpuMode) {
         'nvidia' { $arglist += @('-f', 'docker-compose.nvidia.yml') }
         'amd'    { $arglist += @('-f', 'docker-compose.amd.yml') }
+        'native' { $arglist += @('-f', 'docker-compose.ollama-native.yml') }
     }
     foreach ($p in $effective) { $arglist += @('--profile', $p) }
     $arglist += @('up','-d')
@@ -985,10 +1018,18 @@ function Start-Stack {
 function Get-OllamaGpuMode {
     param([string]$OS = $script:OS)
 
-    # Apple Silicon and Intel Macs: Docker Desktop on Mac runs containers in
-    # a Linux VM that can't reach Metal / eGPU, so containerised Ollama is
-    # always CPU. (Power users can bypass by installing ollama natively.)
-    if ($OS -eq 'Mac') { return 'cpu' }
+    # macOS: Docker Desktop's Linux VM can't reach Metal, so containerised
+    # Ollama is always CPU. But if the user has Ollama running NATIVELY on
+    # the host (brew install / ollama.app), we can detect that and default
+    # to 'native' mode — Open WebUI / LDR / Vane will be repointed at
+    # host.docker.internal:11434 so they get Metal-accelerated inference.
+    if ($OS -eq 'Mac') {
+        try {
+            $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            if ($resp.StatusCode -eq 200) { return 'native' }
+        } catch {}
+        return 'cpu'
+    }
 
     # NVIDIA: check whether docker has the nvidia runtime registered.
     try {
@@ -1129,11 +1170,12 @@ function Show-Summary {
     }
     if ($Result.HasAi) {
         $gpuLabel = switch ($Result.GpuMode) {
-            'nvidia' { 'NVIDIA GPU (CUDA)' }
-            'amd'    { 'AMD GPU (ROCm)' }
-            default  { 'CPU only' }
+            'nvidia' { 'NVIDIA GPU (CUDA, in-container Ollama)' }
+            'amd'    { 'AMD GPU (ROCm, in-container Ollama)' }
+            'native' { 'NATIVE Ollama on macOS (Metal) — in-container ollama disabled' }
+            default  { 'CPU only (in-container Ollama)' }
         }
-        Dim "  GPU mode    : $gpuLabel  (Ollama)"
+        Dim "  GPU mode    : $gpuLabel"
     }
     G ''
     G '  Open these in your browser:'
