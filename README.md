@@ -188,11 +188,6 @@ Skip to the section that matches what you want to do.
   ("when an email arrives → save the attachment → ask the AI to
   summarise it → text me the result") into workflows that run on a
   schedule.
-- **n8n-postgres** — the database n8n uses to remember its workflows.
-  Internal plumbing; you don't open it directly.
-- **Qdrant** — a "vector database". Lets the AI search by meaning
-  instead of keywords. Used by n8n's AI nodes and the research tools.
-  Plumbing.
 
 ### MEDIA — your own Netflix / Spotify / Google Photos
 
@@ -204,11 +199,6 @@ Skip to the section that matches what you want to do.
 - **Immich** — your own Google Photos. Auto-backup from your phone,
   face / object recognition, search by what's IN the photo, share
   albums. Replaces Google Photos completely.
-- **immich-machine-learning** — Immich's brain. Does the face / object
-  recognition. You never click on it directly.
-- **immich-redis** — Immich's short-term memory cache. Internal plumbing.
-- **immich-postgres** — Immich's database. Stores who's in each photo,
-  album info, etc. Plumbing.
 
 ### PRODUCTIVITY — utilities and one-off tools
 
