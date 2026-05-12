@@ -24,7 +24,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/heimdall/config:/config
     ports:
@@ -87,7 +87,7 @@ services:
       - "4533:4533"
     restart: always
     environment:
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/navidrome:/data
       - ${MUSIC_PATH:-F:/Music}:/music:ro
@@ -106,7 +106,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=${TZ:-UTC}
+      - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/jellyfin/library:/config
       - ${MOVIES_PATH:-F:/Movies}:/media/movies
