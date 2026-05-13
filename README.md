@@ -113,7 +113,7 @@ After that, day-to-day is `[2] Start Stack` / `[3] Stop Stack`. Stopping never t
 | --- | --- | --- | --- |
 | Heimdall | <http://localhost:8080> | Open WebUI | <http://localhost:9002> |
 | Jellyfin | <http://localhost:9014> | SearXNG | <http://localhost:8031> |
-| Navidrome | <http://localhost:4533> | Local Deep Research | <http://localhost:5000> |
+| Navidrome | <http://localhost:4533> | Local Deep Research | <http://localhost:5005> |
 | Immich | <http://localhost:2283> | Vane | <http://localhost:3000> |
 | Filebrowser | <http://localhost:8095> | Hermes Workspace | <http://localhost:3030> |
 | Omni Tools | <http://localhost:8890> | Hermes Gateway | <http://localhost:8642> |

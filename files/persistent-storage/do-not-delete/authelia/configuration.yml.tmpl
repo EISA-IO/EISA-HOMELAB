@@ -67,6 +67,10 @@ access_control:
       policy: one_factor
       subject:
         - group:admins
+    - domain: qdrant.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
 
 ###############################################################
 #                         AI IMAGES                           #
@@ -103,6 +107,14 @@ access_control:
       policy: one_factor
       subject:
         - group:admins
+    - domain: vane.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
+    - domain: research.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
 ###############################################################
 #                          MEDIA                              #
 ###############################################################
@@ -118,14 +130,14 @@ access_control:
       policy: one_factor
       subject:
         - group:admins
+    - domain: photos.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
 
 ###############################################################
 #                          STASH                              #
 ###############################################################
-    - domain: manga.${DOMAIN}
-      policy: one_factor
-      subject:
-        - group:admins
     - domain: cookies.${DOMAIN}
       policy: one_factor
       subject:

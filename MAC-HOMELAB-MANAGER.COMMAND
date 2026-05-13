@@ -14,6 +14,7 @@ BASE="$(pwd)"
 COMPOSE_DIR="${BASE}/files"
 SETUP_PS1="${COMPOSE_DIR}/scripts/setup.ps1"
 ENV_FILE="${COMPOSE_DIR}/.env"
+STATE_FILE="${COMPOSE_DIR}/.wizard-state.json"
 CONTAINER="ollama"
 API="http://127.0.0.1:11434"
 CFG="${COMPOSE_DIR}/context_size.cfg"
@@ -50,21 +51,303 @@ pause_return() {
 }
 
 # ============================================================================
-# Preflight: pwsh required (for setup.ps1). If missing, try Homebrew.
+# Wizard-state inspection. The first-run wizard persists the user's choices
+# (including GPU mode) in files/.wizard-state.json. Mac users who picked
+# "NATIVE Ollama on macOS" during the wizard's Step 3b end up with
+# gpuMode = "native" in here; everything else (cpu / nvidia / amd) means
+# the containerised ollama path.
+# ============================================================================
+get_gpu_mode() {
+    [ -f "${STATE_FILE}" ] || { printf ''; return 0; }
+    # Minimal JSON parse: pick the value of the "gpuMode" key. No jq dep.
+    grep -oE '"gpuMode"[[:space:]]*:[[:space:]]*"[^"]*"' "${STATE_FILE}" 2>/dev/null \
+        | head -n1 \
+        | sed -E 's/.*"([^"]*)"[[:space:]]*$/\1/'
+}
+is_native_mode() { [ "$(get_gpu_mode)" = "native" ]; }
+
+api_ready() { curl -sf --max-time 2 "${API}/api/tags" >/dev/null 2>&1; }
+
+# ============================================================================
+# Native (host-installed) ollama lifecycle. Used when gpuMode == "native".
+# Prefers Homebrew (clean CLI + launchd integration via `brew services`);
+# falls back to downloading the official Ollama-darwin.zip from GitHub
+# Releases for machines without brew. Either way, ends with the API
+# responding on ${API} or returns non-zero.
+# ============================================================================
+ensure_native_ollama() {
+    # Already installed - just make sure it's running.
+    if command -v ollama >/dev/null 2>&1; then
+        api_ready && return 0
+        echo "  Native ollama is installed but the API at ${API} is silent."
+        echo "  Starting it..."
+        if command -v brew >/dev/null 2>&1; then
+            brew services start ollama >/dev/null 2>&1 || true
+        fi
+        if ! api_ready; then
+            # Fallback: launch `ollama serve` detached. nohup so it survives
+            # this shell exiting.
+            (nohup ollama serve >/tmp/eisa-ollama-serve.log 2>&1 &)
+        fi
+        local i
+        for i in $(seq 1 30); do
+            sleep 1
+            api_ready && return 0
+        done
+        err "  Native ollama did not respond within 30s."
+        echo "      Recent log:   tail -n 50 /tmp/eisa-ollama-serve.log"
+        echo "      Manual start: ollama serve"
+        pause_return
+        return 1
+    fi
+
+    # Not installed - install it.
+    clear
+    header "INSTALLING NATIVE OLLAMA"
+    echo "  You picked NATIVE Ollama (Metal-accelerated) during first-run,"
+    echo "  but the 'ollama' CLI is not on this Mac yet. Installing now."
+    echo
+
+    if command -v brew >/dev/null 2>&1; then
+        echo "  Homebrew detected - using 'brew install ollama' (recommended)."
+        echo
+        if ! brew install ollama; then
+            err "  brew install ollama failed."
+            echo "      See the output above for details."
+            pause_return
+            return 1
+        fi
+        echo
+        echo "  Starting ollama as a background launchd service..."
+        brew services start ollama >/dev/null 2>&1 || true
+    else
+        echo "  Homebrew not found. Downloading the official Ollama Mac app from:"
+        echo "    https://github.com/ollama/ollama/releases/latest"
+        echo
+        local tmpdir zip_path
+        tmpdir="$(mktemp -d)"
+        zip_path="${tmpdir}/Ollama-darwin.zip"
+        if ! curl -fL --progress-bar \
+                -o "${zip_path}" \
+                "https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip"; then
+            err "  Download failed."
+            rm -rf "${tmpdir}"
+            pause_return
+            return 1
+        fi
+        echo
+        echo "  Extracting Ollama.app to /Applications ..."
+        # ditto preserves macOS metadata (codesign, quarantine) better than unzip.
+        if ! ditto -xk "${zip_path}" /Applications/; then
+            err "  Extracting to /Applications failed."
+            rm -rf "${tmpdir}"
+            pause_return
+            return 1
+        fi
+        rm -rf "${tmpdir}"
+        echo "  Launching Ollama.app (first launch installs the 'ollama' CLI"
+        echo "  into /usr/local/bin and starts the background server)..."
+        open -a Ollama 2>/dev/null || open /Applications/Ollama.app 2>/dev/null || true
+        echo "  If the app shows a 'Move to Applications' or 'Install Command'"
+        echo "  prompt, click through it now."
+    fi
+
+    # Wait for the API to come up.
+    echo
+    echo "  Waiting for the native ollama API at ${API} ..."
+    local i
+    for i in $(seq 1 60); do
+        sleep 1
+        # Refresh PATH cache so a freshly-installed brew/CLI is visible.
+        hash -r 2>/dev/null || true
+        if api_ready; then
+            say "  [OK] Native ollama is up."
+            return 0
+        fi
+    done
+    err "  Ollama is installed but the API didn't respond within 60s."
+    echo "      If you used the .app installer, look for a one-time CLI-install"
+    echo "      prompt in the Ollama app window and accept it, then re-run."
+    pause_return
+    return 1
+}
+
+# Resolve PERSISTENT_STORAGE from .env (or fall back to the wizard default)
+# and return an absolute path. Used by the optional "reset databases" step
+# in Stop Stack to know where the bind-mounted postgres data lives.
+resolve_persistent_storage() {
+    local ps=""
+    if [ -f "${ENV_FILE}" ]; then
+        ps="$(grep -E '^PERSISTENT_STORAGE=' "${ENV_FILE}" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    fi
+    [ -z "${ps}" ] && ps="./persistent-storage"
+    case "${ps}" in
+        /*) printf '%s\n' "${ps}" ;;
+        *)  printf '%s/%s\n' "${COMPOSE_DIR}" "${ps#./}" ;;
+    esac
+}
+
+# Wipe ONLY the two postgres bind-mount data dirs so the next start does a
+# clean initdb. This is the recovery path for the half-initialised-postgres
+# trap (PG_VERSION present so postgres refuses to re-init, but global/
+# pg_filenode.map missing so it can't start either).
+#
+# Caller must already have called the regular Stop Stack so no postgres
+# container is holding the directory open.
+#
+# Strictly opt-in: requires a typed "yes" confirmation, and only touches
+# the two named subdirectories - media folders, ollama models, open-webui
+# chat history, qdrant vectors, .env, wizard state are ALL preserved.
+deep_clean_postgres() {
+    local base n8n_dir immich_dir
+    base="$(resolve_persistent_storage)"
+    n8n_dir="${base}/n8n/postgres_storage"
+    immich_dir="${base}/immich/postgres"
+
+    echo
+    err  "  ============================================================"
+    err  "   RESET DATABASES - DESTRUCTIVE"
+    err  "  ============================================================"
+    echo
+    echo "  This will permanently delete:"
+    echo "    ${n8n_dir}"
+    echo "    ${immich_dir}"
+    echo
+    echo "  Effect:"
+    echo "    - n8n: every workflow run, credential, and saved workflow is gone."
+    echo "    - immich: account + photo INDEX gone. The actual image files in"
+    echo "      your photos folder are NOT touched; immich will rebuild the"
+    echo "      index from them on next start, which takes a while."
+    echo
+    echo "  NOT touched:"
+    echo "    - your media folders (movies / music / photos)"
+    echo "    - ollama models / open-webui chats / qdrant vectors"
+    echo "    - your .env file or wizard state"
+    echo
+    echo "  Type 'yes' (lowercase, no quotes) to confirm. Anything else cancels."
+    echo
+    local confirm
+    read -r -p "  Confirm: " confirm
+    if [ "${confirm}" != "yes" ]; then
+        dim "  Cancelled - nothing deleted."
+        return 0
+    fi
+    echo
+    if [ -d "${n8n_dir}" ]; then
+        rm -rf "${n8n_dir}" && say "  Removed ${n8n_dir}"
+    else
+        dim "  Skipped ${n8n_dir} (did not exist)"
+    fi
+    if [ -d "${immich_dir}" ]; then
+        rm -rf "${immich_dir}" && say "  Removed ${immich_dir}"
+    else
+        dim "  Skipped ${immich_dir} (did not exist)"
+    fi
+    echo
+    say "  Databases reset. The next [2] Start Stack will initdb cleanly."
+}
+
+# Dispatcher: ensure the right ollama (native vs container) is up and ready.
+ollama_ensure() {
+    if is_native_mode; then
+        ensure_native_ollama
+    else
+        ollama_ensure_container
+    fi
+}
+
+# Run an ollama CLI command in the mode-appropriate way. Non-interactive
+# variant for `ollama list / rm / --version`.
+ollama_cli() {
+    if is_native_mode; then
+        ollama "$@"
+    else
+        ollama_cli "$@"
+    fi
+}
+# Interactive variant for `ollama run / pull` so the user sees TTY output.
+ollama_cli_it() {
+    if is_native_mode; then
+        ollama "$@"
+    else
+        ollama_cli_it "$@"
+    fi
+}
+
+# ============================================================================
+# Preflight: pwsh required (for setup.ps1). Try Homebrew, then fall back to
+# the official PowerShell .pkg installer from GitHub Releases.
 # ============================================================================
 ensure_pwsh() {
     if command -v pwsh >/dev/null 2>&1; then return 0; fi
     err "  PowerShell 7 (pwsh) is required by setup.ps1."
+    echo
+
     if command -v brew >/dev/null 2>&1; then
         echo "  Installing it via Homebrew (one-time)..."
-        brew install --cask powershell
-        return $?
+        if brew install --cask powershell; then
+            hash -r 2>/dev/null || true
+            command -v pwsh >/dev/null 2>&1 && return 0
+        fi
+        err "  Homebrew install failed; trying the official .pkg installer..."
+        echo
+    else
+        echo "  Homebrew is not installed - falling back to the official .pkg installer."
+        echo
     fi
+
+    local arch pkg_arch
+    arch="$(uname -m)"
+    case "${arch}" in
+        arm64)  pkg_arch="osx-arm64" ;;
+        x86_64) pkg_arch="osx-x64"   ;;
+        *)
+            err "  Unsupported architecture: ${arch}"
+            echo "  Install PowerShell manually from:"
+            echo "    https://github.com/PowerShell/PowerShell/releases"
+            return 1
+            ;;
+    esac
+
+    echo "  Detecting the latest stable PowerShell release..."
+    local pkg_url
+    pkg_url="$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest 2>/dev/null \
+        | grep -oE "\"browser_download_url\": *\"[^\"]+${pkg_arch}\\.pkg\"" \
+        | head -n1 \
+        | sed -E 's/^"browser_download_url": *"//; s/"$//')"
+    if [ -z "${pkg_url}" ]; then
+        err "  Could not determine the latest PowerShell .pkg URL."
+        echo "  Install PowerShell manually from:"
+        echo "    https://github.com/PowerShell/PowerShell/releases"
+        return 1
+    fi
+
+    local tmpdir pkg_path
+    tmpdir="$(mktemp -d)"
+    pkg_path="${tmpdir}/powershell.pkg"
+    echo "  Downloading: ${pkg_url}"
+    if ! curl -fL --progress-bar -o "${pkg_path}" "${pkg_url}"; then
+        err "  Download failed."
+        rm -rf "${tmpdir}"
+        return 1
+    fi
+
     echo
-    echo "  Homebrew (brew) is not installed."
-    echo "  Install Homebrew first:  https://brew.sh"
-    echo "  Or install PowerShell manually from:"
-    echo "    https://github.com/PowerShell/PowerShell/releases"
+    echo "  Installing PowerShell - you will be prompted for your macOS password."
+    if ! sudo installer -pkg "${pkg_path}" -target /; then
+        err "  Installer failed."
+        rm -rf "${tmpdir}"
+        return 1
+    fi
+    rm -rf "${tmpdir}"
+
+    hash -r 2>/dev/null || true
+    if command -v pwsh >/dev/null 2>&1; then
+        say "  [OK] PowerShell installed."
+        return 0
+    fi
+    err "  PowerShell installer reported success but pwsh is still not on PATH."
+    echo "  Open a new Terminal window and re-run the manager."
     return 1
 }
 
@@ -87,7 +370,8 @@ main_menu() {
         say "   [1] First-Run Setup       (wizard - run me once on a fresh clone)"
         say "   [2] Start Stack           (day-to-day, brings everything up)"
         say "   [3] Stop Stack            (compose down + cleanup)"
-        say "   [4] LLM Manager           (pull, launch, delete Ollama models)"
+        say "   [4] List Stack            (show running containers + health)"
+        say "   [5] LLM Manager           (pull, launch, delete Ollama models)"
         echo
         say "   [0] Exit"
         echo
@@ -97,7 +381,8 @@ main_menu() {
             1) do_first_run ;;
             2) do_start ;;
             3) do_stop ;;
-            4) ollama_boot ;;
+            4) do_list ;;
+            5) ollama_boot ;;
             0) return 0 ;;
         esac
     done
@@ -176,11 +461,14 @@ do_stop() {
         return
     fi
 
-    echo "  [1/3] docker compose down --remove-orphans  (project: eisa-homelab)"
+    echo "  [1/3] docker compose down --remove-orphans -t 10  (project: eisa-homelab)"
+    echo "        Containers get 10s to stop gracefully, then SIGKILL. If a half-"
+    echo "        broken container from a failed startup is stuck shutting down,"
+    echo "        this prevents the whole stop from hanging indefinitely."
     echo "        ----------------------------------------------------------------"
     (
         cd "${COMPOSE_DIR}"
-        COMPOSE_PROFILES=ai,media,tunnel docker compose down --remove-orphans
+        COMPOSE_PROFILES=ai,media,tunnel docker compose down --remove-orphans -t 10
     )
     echo "        ----------------------------------------------------------------"
     echo
@@ -216,29 +504,160 @@ do_stop() {
     echo
     echo "  Note: bind-mounted media + files/persistent-storage are NOT touched."
     echo "        Named docker volumes are NOT touched."
+    if is_native_mode; then
+        echo "        Native ollama on the host is NOT touched - it keeps running"
+        echo "        as a launchd service. Manage it via the LLM Manager menu."
+    fi
+    echo
+
+    # Offer the postgres reset only when it's likely to help: i.e. an
+    # interrupted previous start left the bind-mount in a half-initdb
+    # state (PG_VERSION present but global/pg_filenode.map missing).
+    # Skip the prompt entirely otherwise so day-to-day stops are quiet.
+    local base n8n_dir immich_dir need_reset=0
+    base="$(resolve_persistent_storage)"
+    n8n_dir="${base}/n8n/postgres_storage"
+    immich_dir="${base}/immich/postgres"
+    for d in "${n8n_dir}" "${immich_dir}"; do
+        if [ -f "${d}/PG_VERSION" ] && [ ! -f "${d}/global/pg_filenode.map" ]; then
+            need_reset=1
+            break
+        fi
+    done
+
+    if [ "${need_reset}" -eq 1 ]; then
+        echo "  ----------------------------------------------------------------"
+        err  "  Detected a half-initialised postgres data directory."
+        echo "  This is what blocks the stack from starting with 'pg_filenode.map'"
+        echo "  fatal errors. The fix is to wipe and let postgres initdb fresh."
+        echo
+        local reset
+        read -r -p "  Reset the postgres databases now? [y/N]: " reset
+        case "${reset}" in
+            y|Y|yes|YES) deep_clean_postgres ;;
+            *) dim "  Skipped. You can re-run Stop Stack any time to be offered again." ;;
+        esac
+        echo
+    fi
+    pause_return
+}
+
+# ============================================================================
+# [4] LIST STACK
+# ============================================================================
+do_list() {
+    clear
+    header "Stack status"
+
+    if ! command -v docker >/dev/null 2>&1; then
+        err "  [X] docker CLI not found in PATH."
+        echo "      Install Docker Desktop and re-run."
+        pause_return
+        return
+    fi
+    if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+        err "  [X] Docker engine is not running."
+        echo "      Start Docker Desktop and re-run."
+        pause_return
+        return
+    fi
+
+    local -a EISA=(
+        cloudflared heimdall-media Caddy Authelia navidrome jellyfin
+        filebrowser omni-tools n8n qdrant ollama open-webui searxng
+        local-deep-research vane Portainer tor-browser
+        immich-server immich-machine-learning immich-redis immich-postgres
+        hermes-agent hermes-workspace
+    )
+
+    printf '  %-28s  %-10s  %-11s  %s\n' "CONTAINER" "STATE" "HEALTH" "STATUS"
+    dim    "  ----------------------------  ----------  -----------  -----------------------------------"
+
+    local found=0 running=0 healthy=0 unhealthy=0
+    local name state health status row
+    for name in "${EISA[@]}"; do
+        state="$(docker inspect -f '{{.State.Status}}' "${name}" 2>/dev/null || true)"
+        [ -z "${state}" ] && continue
+        found=$((found + 1))
+        health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}' "${name}" 2>/dev/null || true)"
+        [ -z "${health}" ] && health="n/a"
+        status="$(docker ps -a --filter "name=^${name}$" --format '{{.Status}}' 2>/dev/null || true)"
+        [ -z "${status}" ] && status="-"
+
+        [ "${state}" = "running" ]    && running=$((running + 1))
+        [ "${health}" = "healthy" ]   && healthy=$((healthy + 1))
+        [ "${health}" = "unhealthy" ] && unhealthy=$((unhealthy + 1))
+
+        row="$(printf '  %-28s  %-10s  %-11s  %s' "${name}" "${state}" "${health}" "${status}")"
+        if [ "${state}" != "running" ] || [ "${health}" = "unhealthy" ]; then
+            err "${row}"
+        elif [ "${health}" = "healthy" ] || [ "${health}" = "n/a" ]; then
+            say "${row}"
+        else
+            # starting, restarting, etc.
+            dim "${row}"
+        fi
+    done
+
+    echo
+    if [ "${found}" -eq 0 ]; then
+        dim "  No EISA containers found - the stack does not appear to be deployed."
+        echo
+        echo "  Use option [2] Start Stack to bring it up."
+    else
+        say "  Summary: ${found} tracked, ${running} running, ${healthy} healthy, ${unhealthy} unhealthy"
+    fi
+
+    # In native mode ollama doesn't run as a docker container, so it never
+    # shows up in the table above. Surface its status separately so the
+    # user can tell at a glance whether the LLM backend is alive.
+    if is_native_mode; then
+        echo
+        dim "  Native ollama (host-installed, not a docker container):"
+        local nver
+        if command -v ollama >/dev/null 2>&1; then
+            nver="$(ollama --version 2>/dev/null | head -n1)"
+            [ -z "${nver}" ] && nver="installed"
+            if api_ready; then
+                say  "    ollama (native)              ${nver}    API responding at ${API}"
+            else
+                err  "    ollama (native)              ${nver}    API NOT responding at ${API}"
+                echo "    -> open [5] LLM Manager to start it, or run: ollama serve"
+            fi
+        else
+            err  "    ollama (native)              NOT INSTALLED"
+            echo "    -> open [5] LLM Manager - it will install via Homebrew or download"
+            echo "       the official Ollama Mac app from GitHub Releases."
+        fi
+    fi
+
     echo
     pause_return
 }
 
 # ============================================================================
-# [4] OLLAMA / LLM MANAGER
+# [5] OLLAMA / LLM MANAGER
 # ============================================================================
 ollama_boot() {
-    if ! command -v docker >/dev/null 2>&1; then
-        clear
-        header "ERROR"
-        err "  docker CLI not found in PATH."
-        echo "  Install Docker Desktop and re-run."
-        pause_return
-        return
-    fi
-    if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
-        clear
-        header "ERROR"
-        err "  Docker engine is not running."
-        echo "  Start Docker Desktop and re-run."
-        pause_return
-        return
+    # Docker is only required for the containerised path. Native ollama
+    # lives on the host, so we skip these checks when gpuMode == "native".
+    if ! is_native_mode; then
+        if ! command -v docker >/dev/null 2>&1; then
+            clear
+            header "ERROR"
+            err "  docker CLI not found in PATH."
+            echo "  Install Docker Desktop and re-run."
+            pause_return
+            return
+        fi
+        if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+            clear
+            header "ERROR"
+            err "  Docker engine is not running."
+            echo "  Start Docker Desktop and re-run."
+            pause_return
+            return
+        fi
     fi
 
     [ -f "${CFG}" ] || echo 8192 > "${CFG}"
@@ -253,11 +672,9 @@ HIGH|carstenuhlig/omnicoder-2-9b:q4_k_m
 EOF
     fi
 
-    if ! ollama_ensure_container; then return; fi
+    if ! ollama_ensure; then return; fi
     ollama_menu
 }
-
-api_ready() { curl -sf --max-time 2 "${API}/api/tags" >/dev/null 2>&1; }
 
 ollama_ensure_container() {
     local running i
@@ -309,7 +726,7 @@ ollama_unload_vram() {
 }
 
 ollama_list_installed() {
-    docker exec "${CONTAINER}" ollama list 2>/dev/null | tail -n +2 | awk '
+    ollama_cli list 2>/dev/null | tail -n +2 | awk '
         NF >= 3 {
             name=$1
             if ($3 ~ /^[0-9.]+$/ && $4 ~ /^[KMGT]?B$/) { size=$3" "$4 } else { size=$3 }
@@ -319,7 +736,7 @@ ollama_list_installed() {
 }
 
 ollama_is_installed() {
-    docker exec "${CONTAINER}" ollama list 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -qx "$1"
+    ollama_cli list 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -qx "$1"
 }
 
 ollama_total_size_gb() {
@@ -332,12 +749,20 @@ ollama_total_size_gb() {
 ollama_menu() {
     while true; do
         clear
-        header "OLLAMA MANAGER (docker)"
+        if is_native_mode; then
+            header "OLLAMA MANAGER (native - Apple Metal)"
+        else
+            header "OLLAMA MANAGER (docker)"
+        fi
         local ver size
-        ver="$(docker exec "${CONTAINER}" ollama --version 2>/dev/null || true)"
+        ver="$(ollama_cli --version 2>/dev/null | head -n1 || true)"
         [ -z "${ver}" ] && ver="unknown"
         size="$(ollama_total_size_gb)"
-        echo "  Container: ${CONTAINER}"
+        if is_native_mode; then
+            echo "  Mode     : NATIVE (host-installed, Metal accelerated)"
+        else
+            echo "  Container: ${CONTAINER}"
+        fi
         echo "  Version  : ${ver}"
         echo "  API      : ${API}"
         echo "  Context  : ${CTX}"
@@ -363,7 +788,7 @@ ollama_menu() {
 }
 
 ollama_launch() {
-    ollama_ensure_container || return
+    ollama_ensure || return
     clear
     header "LAUNCH A MODEL"
     local -a names sizes
@@ -373,7 +798,11 @@ ollama_launch() {
         sizes+=("${size}")
     done < <(ollama_list_installed)
     if [ "${#names[@]}" -eq 0 ]; then
-        echo "  No installed models in the ${CONTAINER} container."
+        if is_native_mode; then
+            echo "  No models installed yet in the native ollama on this Mac."
+        else
+            echo "  No installed models in the ${CONTAINER} container."
+        fi
         echo "  Pull one first via menu option [2]."
         echo
         pause_return
@@ -399,7 +828,11 @@ ollama_launch() {
     clear
     header "LAUNCHING MODEL"
     echo "  Tag       : ${model}"
-    echo "  Container : ${CONTAINER}"
+    if is_native_mode; then
+        echo "  Backend   : native ollama (Apple Metal)"
+    else
+        echo "  Container : ${CONTAINER}"
+    fi
     echo "  Context   : ${CTX}"
     echo
     dim "  Inside the REPL: /set parameter num_ctx ${CTX}  (per-session override)"
@@ -407,11 +840,11 @@ ollama_launch() {
     echo
     local -a flags=()
     [[ "${model}" == *qwen3.5* ]] && flags+=(--think=false)
-    docker exec -it "${CONTAINER}" ollama run "${flags[@]}" "${model}" || true
+    ollama_cli_it run "${flags[@]}" "${model}" || true
 }
 
 ollama_pull_menu() {
-    ollama_ensure_container || return
+    ollama_ensure || return
     while true; do
         clear
         header "PULL A RECOMMENDED/CUSTOM MODEL"
@@ -449,7 +882,11 @@ ollama_pull_recommended() {
         printf '  [%d] %s\n' "${count}" "${tag}"
     done < <(grep -v '^[[:space:]]*$' "${RECFILE}" | grep -v '^#')
     if [ "${count}" -eq 0 ]; then
-        echo "  All recommended models are already installed in the container."
+        if is_native_mode; then
+            echo "  All recommended models are already installed in the native ollama."
+        else
+            echo "  All recommended models are already installed in the container."
+        fi
         echo
         pause_return
         return
@@ -469,9 +906,13 @@ ollama_pull_recommended() {
     local model="${tags[$((pick-1))]}"
     clear
     header "DOWNLOADING MODEL"
-    echo "  Pulling ${model} into ${CONTAINER}..."
+    if is_native_mode; then
+        echo "  Pulling ${model} via native ollama..."
+    else
+        echo "  Pulling ${model} into ${CONTAINER}..."
+    fi
     echo
-    docker exec -it "${CONTAINER}" ollama pull "${model}" || true
+    ollama_cli_it pull "${model}" || true
     echo
     pause_return
 }
@@ -483,9 +924,13 @@ ollama_pull_custom() {
     read -r -p "  Enter model tag: " model
     [ -z "${model}" ] && return
     echo
-    echo "  Pulling ${model} into ${CONTAINER}..."
+    if is_native_mode; then
+        echo "  Pulling ${model} via native ollama..."
+    else
+        echo "  Pulling ${model} into ${CONTAINER}..."
+    fi
     echo
-    docker exec -it "${CONTAINER}" ollama pull "${model}" || true
+    ollama_cli_it pull "${model}" || true
     echo
     pause_return
 }
@@ -500,7 +945,11 @@ ollama_delete() {
         sizes+=("${size}")
     done < <(ollama_list_installed)
     if [ "${#names[@]}" -eq 0 ]; then
-        echo "  No installed models in the ${CONTAINER} container."
+        if is_native_mode; then
+            echo "  No models installed in the native ollama."
+        else
+            echo "  No installed models in the ${CONTAINER} container."
+        fi
         echo
         pause_return
         return
@@ -529,8 +978,12 @@ ollama_delete() {
     read -r -p "  Are you sure? [y/N]: " confirm
     case "${confirm}" in y|Y|yes|YES) ;; *) return ;; esac
     echo
-    echo "  Removing ${model} from ${CONTAINER}..."
-    if docker exec "${CONTAINER}" ollama rm "${model}"; then
+    if is_native_mode; then
+        echo "  Removing ${model} from the native ollama..."
+    else
+        echo "  Removing ${model} from ${CONTAINER}..."
+    fi
+    if ollama_cli rm "${model}"; then
         say "  [OK] ${model} deleted successfully."
         sleep 2
     else
@@ -581,14 +1034,37 @@ ollama_context() {
         echo
         echo "  Saved locally in context_size.cfg."
         echo
-        echo "  Choose Y to also write OLLAMA_NUM_CTX in .env and recreate the"
-        echo "  ollama container (server-side default; ~10s downtime)."
-        echo
-        local recreate
-        read -r -p "  Recreate container with new server-side default? [y/N]: " recreate
         CTX="${newctx}"
         echo "${CTX}" > "${CFG}"
-        case "${recreate}" in y|Y|yes|YES) ollama_apply_ctx_to_env ;; esac
+        if is_native_mode; then
+            # Native mode: ollama reads OLLAMA_NUM_CTX from its own env at
+            # `ollama serve` start time. We can't simply edit .env and
+            # `docker compose up` like in container mode - the brew launchd
+            # plist / Ollama.app owns the process.
+            echo "  Native ollama is in use, so there is no docker container to recreate."
+            echo
+            echo "  This new value is the per-session default the REPL hint will show."
+            echo "  To make it the SERVER-SIDE default, set it in the ollama service env:"
+            if command -v brew >/dev/null 2>&1; then
+                echo "    launchctl setenv OLLAMA_NUM_CTX ${CTX}"
+                echo "    brew services restart ollama"
+            else
+                echo "    Quit the Ollama.app, set OLLAMA_NUM_CTX=${CTX} in your shell"
+                echo "    profile, and relaunch it."
+            fi
+            echo
+            echo "  Either way, you can always override per session inside the REPL:"
+            echo "    /set parameter num_ctx ${CTX}"
+            echo
+            pause_return
+        else
+            echo "  Choose Y to also write OLLAMA_NUM_CTX in .env and recreate the"
+            echo "  ollama container (server-side default; ~10s downtime)."
+            echo
+            local recreate
+            read -r -p "  Recreate container with new server-side default? [y/N]: " recreate
+            case "${recreate}" in y|Y|yes|YES) ollama_apply_ctx_to_env ;; esac
+        fi
         return
     done
 }
@@ -614,7 +1090,11 @@ ollama_apply_ctx_to_env() {
 # ============================================================================
 # Entry point
 # ============================================================================
-clear
+# Wipe the visible screen AND the scrollback buffer so Terminal.app's
+# launcher prelude ("Last login...", "/path/to/MAC-HOMELAB-MANAGER.COMMAND
+# ; exit;") cannot be scrolled back to. Plain `clear` only handles the
+# visible screen on macOS, leaving the prelude in scrollback.
+printf '\033[H\033[2J\033[3J'
 main_menu
 echo
 pause_close

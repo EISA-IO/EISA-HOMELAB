@@ -43,10 +43,10 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ${PERSISTENT_STORAGE}/caddy/Caddyfile:/etc/caddy/Caddyfile
-      - ${PERSISTENT_STORAGE}/caddy/site:/srv
-      - ${PERSISTENT_STORAGE}/caddy/caddy_data:/data
-      - ${PERSISTENT_STORAGE}/caddy/caddy_config:/config
+      - ${PERSISTENT_STORAGE}/do-not-delete/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ${PERSISTENT_STORAGE}/do-not-delete/caddy/site:/srv
+      - ${PERSISTENT_STORAGE}/do-not-delete/caddy/caddy_data:/data
+      - ${PERSISTENT_STORAGE}/do-not-delete/caddy/caddy_config:/config
     depends_on:
       authelia:
         condition: service_healthy
@@ -61,9 +61,9 @@ services:
     image: authelia/authelia:latest
     container_name: Authelia
     volumes:
-      - ${PERSISTENT_STORAGE}/authelia:/config
-      - ${PERSISTENT_STORAGE}/authelia/assets:/assets
-      - ${PERSISTENT_STORAGE}/authelia/assets:/config/overrides
+      - ${PERSISTENT_STORAGE}/do-not-delete/authelia:/config
+      - ${PERSISTENT_STORAGE}/do-not-delete/authelia/assets:/assets
+      - ${PERSISTENT_STORAGE}/do-not-delete/authelia/assets:/config/overrides
     ports:
       - "9091:9091"
     restart: always
@@ -292,7 +292,13 @@ services:
     container_name: local-deep-research
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      # Host 5005 -> container 5000. Default was 5000:5000 but macOS's
+      # AirPlay Receiver service (System Settings -> General -> AirDrop &
+      # Handoff) listens on 5000 on Monterey+, causing a port-bind clash.
+      # Other containers still talk to this service over the docker network
+      # at local-deep-research:5000, so only the host-facing URL changes
+      # (now http://localhost:5005).
+      - "5005:5000"
     environment:
       - LDR_WEB_HOST=0.0.0.0
       - LDR_WEB_PORT=5000

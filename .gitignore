@@ -10,25 +10,25 @@ files/.wizard-state.json
 files/context_size.cfg
 
 # Rendered configs (templates with .tmpl are committed; resolved files are not).
-files/persistent-storage/caddy/Caddyfile
-files/persistent-storage/authelia/configuration.yml
+files/persistent-storage/do-not-delete/caddy/Caddyfile
+files/persistent-storage/do-not-delete/authelia/configuration.yml
 files/persistent-storage/do-not-delete/searxng/settings.yml
 
 # Real users database (only the .example template is committed).
-files/persistent-storage/authelia/users_database.yml
+files/persistent-storage/do-not-delete/authelia/users_database.yml
 
 # =============================================================================
 # Runtime data — bind-mounts that fill up at runtime
 # =============================================================================
-files/persistent-storage/caddy/caddy_data/
-files/persistent-storage/caddy/caddy_config/
-files/persistent-storage/caddy/site/
-files/persistent-storage/caddy/Caddyfile.bak.*
+files/persistent-storage/do-not-delete/caddy/caddy_data/
+files/persistent-storage/do-not-delete/caddy/caddy_config/
+files/persistent-storage/do-not-delete/caddy/site/
+files/persistent-storage/do-not-delete/caddy/Caddyfile.bak.*
 
-files/persistent-storage/authelia/db.sqlite3
-files/persistent-storage/authelia/notification.txt
-files/persistent-storage/authelia/assets/
-files/persistent-storage/authelia/overrides/
+files/persistent-storage/do-not-delete/authelia/db.sqlite3
+files/persistent-storage/do-not-delete/authelia/notification.txt
+files/persistent-storage/do-not-delete/authelia/assets/
+files/persistent-storage/do-not-delete/authelia/overrides/
 
 files/persistent-storage/jellyfin/
 files/persistent-storage/navidrome/

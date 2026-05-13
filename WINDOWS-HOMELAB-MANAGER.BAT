@@ -11,7 +11,8 @@ mode con: cols=140 lines=42 >nul 2>&1
 ::   [1] First-Run Setup    (wizard - once on a fresh clone)
 ::   [2] Start Stack        (day-to-day; brings the chosen profiles up)
 ::   [3] Stop Stack         (compose down + by-name fallback)
-::   [4] LLM Manager        (pull / launch / delete Ollama models)
+::   [4] List Stack         (show running containers + health)
+::   [5] LLM Manager        (pull / launch / delete Ollama models)
 :: =============================================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -26,6 +27,16 @@ set "CFG=%COMPOSE_DIR%\context_size.cfg"
 set "RECFILE=%COMPOSE_DIR%\recommended_models.txt"
 set "LISTTMP=%TEMP%\ollama_menu_%RANDOM%_%RANDOM%.tmp"
 set "IDXTMP=%TEMP%\ollama_idx_%RANDOM%_%RANDOM%.tmp"
+
+:: Hoisted to top so both Stop Stack and List Stack can iterate the same list.
+set "EISA=cloudflared heimdall-media Caddy Authelia navidrome jellyfin filebrowser omni-tools n8n qdrant ollama open-webui searxng local-deep-research vane Portainer tor-browser immich-server immich-machine-learning immich-redis immich-postgres hermes-agent hermes-workspace"
+
+:: Postgres bind-mount paths the wizard uses by default. The "reset databases"
+:: recovery in Stop Stack only ever touches these two and only with explicit
+:: typed-"yes" confirmation - everything else (media, ollama models, named
+:: docker volumes) stays intact.
+set "N8N_PG=%COMPOSE_DIR%\persistent-storage\n8n\postgres_storage"
+set "IMMICH_PG=%COMPOSE_DIR%\persistent-storage\immich\postgres"
 
 where pwsh >nul 2>&1
 if %ERRORLEVEL%==0 (set "PS=pwsh") else (set "PS=powershell")
@@ -49,7 +60,8 @@ echo.
 echo   [1] First-Run Setup       (wizard - run me once on a fresh clone)
 echo   [2] Start Stack           (day-to-day, brings everything up)
 echo   [3] Stop Stack            (compose down + cleanup)
-echo   [4] LLM Manager           (pull, launch, delete Ollama models)
+echo   [4] List Stack            (show running containers + health)
+echo   [5] LLM Manager           (pull, launch, delete Ollama models)
 echo.
 echo   [0] Exit
 echo.
@@ -59,7 +71,8 @@ set /p "choice=  Select option: "
 if "!choice!"=="1" goto :DO_FIRST_RUN
 if "!choice!"=="2" goto :DO_START
 if "!choice!"=="3" goto :DO_STOP
-if "!choice!"=="4" goto :OLLAMA_BOOT
+if "!choice!"=="4" goto :DO_LIST
+if "!choice!"=="5" goto :OLLAMA_BOOT
 if "!choice!"=="0" goto :END
 goto :MAIN_MENU
 
@@ -157,13 +170,14 @@ if errorlevel 1 (
 
 set "COMPOSE_PROFILES=ai,media,tunnel"
 
-echo   [1/3] docker compose down --remove-orphans  (project: eisa-homelab)
+echo   [1/3] docker compose down --remove-orphans -t 10  (project: eisa-homelab)
+echo         Containers get 10s to stop gracefully, then SIGKILL. Prevents a
+echo         half-broken container from a failed startup hanging the whole stop.
+echo         --progress plain avoids cmd.exe redraw artefacts.
 echo         ----------------------------------------------------------------
-docker compose down --remove-orphans
+docker compose --progress plain down --remove-orphans -t 10
 echo         ----------------------------------------------------------------
 echo.
-
-set "EISA=cloudflared heimdall-media Caddy Authelia navidrome jellyfin filebrowser omni-tools n8n qdrant ollama open-webui searxng local-deep-research vane Portainer tor-browser immich-server immich-machine-learning immich-redis immich-postgres hermes-agent hermes-workspace"
 
 echo   [2/3] Stopping any leftover containers by name...
 for %%N in (%EISA%) do (
@@ -193,13 +207,163 @@ echo.
 echo   Note: bind-mounted media + files\persistent-storage are NOT touched.
 echo         Named docker volumes are NOT touched.
 echo.
+
+:: --- Half-init postgres detection -------------------------------------------
+:: Surfaces the "PG_VERSION present but global\pg_filenode.map missing" trap
+:: that bricks Start Stack on subsequent runs. Only prompts when the broken
+:: signature is actually present, so day-to-day stops stay quiet.
+set "POSTGRES_HALFINIT="
+if exist "%N8N_PG%\PG_VERSION" if not exist "%N8N_PG%\global\pg_filenode.map" set "POSTGRES_HALFINIT=1"
+if exist "%IMMICH_PG%\PG_VERSION" if not exist "%IMMICH_PG%\global\pg_filenode.map" set "POSTGRES_HALFINIT=1"
+
+if defined POSTGRES_HALFINIT (
+    echo   ----------------------------------------------------------------
+    echo   Detected a half-initialised postgres data directory.
+    echo   This is what blocks Start Stack with 'pg_filenode.map' fatal errors.
+    echo   The fix is to wipe and let postgres initdb fresh.
+    echo.
+    choice /C YN /N /M "  Reset the postgres databases now? [Y/N]: "
+    if not errorlevel 2 (
+        call :DEEP_CLEAN_POSTGRES
+    ) else (
+        echo   Skipped. You can re-run Stop Stack any time to be offered again.
+    )
+    echo.
+)
+
 echo   Press any key to return to the main menu...
 pause >nul
 goto :MAIN_MENU
 
 
+:: ---------------------------------------------------------------------------
+:: Wipe ONLY the two postgres bind-mount data dirs so the next start does a
+:: clean initdb. Strictly opt-in: requires a typed "yes" (case-sensitive).
+:: Only touches the two named paths - media, ollama models, named volumes,
+:: .env and wizard-state are ALL preserved.
+:: ---------------------------------------------------------------------------
+:DEEP_CLEAN_POSTGRES
+echo.
+echo   ============================================================
+echo    RESET DATABASES - DESTRUCTIVE
+echo   ============================================================
+echo.
+echo   This will permanently delete:
+echo     %N8N_PG%
+echo     %IMMICH_PG%
+echo.
+echo   Effect:
+echo     - n8n: every workflow run, credential, and saved workflow is gone.
+echo     - immich: account + photo INDEX gone. The actual image files in
+echo       your photos folder are NOT touched; immich will rebuild the
+echo       index from them on next start, which takes a while.
+echo.
+echo   NOT touched:
+echo     - your media folders (movies / music / photos)
+echo     - ollama models / open-webui chats / qdrant vectors
+echo     - your .env file or wizard state
+echo.
+echo   Type 'yes' (lowercase, no quotes) to confirm. Anything else cancels.
+echo.
+set "CONFIRM="
+set /p "CONFIRM=  Confirm: "
+if not "%CONFIRM%"=="yes" (
+    echo   Cancelled - nothing deleted.
+    exit /b 0
+)
+echo.
+if exist "%N8N_PG%" (
+    rmdir /s /q "%N8N_PG%" && echo   Removed %N8N_PG%
+) else (
+    echo   Skipped %N8N_PG% ^(did not exist^)
+)
+if exist "%IMMICH_PG%" (
+    rmdir /s /q "%IMMICH_PG%" && echo   Removed %IMMICH_PG%
+) else (
+    echo   Skipped %IMMICH_PG% ^(did not exist^)
+)
+echo.
+echo   Databases reset. The next [2] Start Stack will initdb cleanly.
+exit /b 0
+
+
 :: =============================================================================
-:: [4] OLLAMA / LLM MANAGER  (full port of WINDOWS-LLM-MANAGER.BAT)
+:: [4] LIST STACK  (show running containers + health, color-grouped)
+:: =============================================================================
+:DO_LIST
+cls
+echo.
+echo  +===================================================+
+echo   Stack status
+echo  +===================================================+
+echo.
+
+where docker >nul 2>nul
+if errorlevel 1 (
+    echo   [X] docker CLI not found in PATH.
+    echo       Install Docker Desktop and re-run.
+    echo.
+    pause
+    goto :MAIN_MENU
+)
+docker info --format "{{.ServerVersion}}" >nul 2>nul
+if errorlevel 1 (
+    echo   [X] Docker engine is not running.
+    echo       Start Docker Desktop and re-run.
+    echo.
+    pause
+    goto :MAIN_MENU
+)
+
+echo   CONTAINER                       STATE       HEALTH       STATUS
+echo   ------------------------------  ----------  -----------  -----------------------------------
+set /a _FOUND=0
+set /a _RUNNING=0
+set /a _HEALTHY=0
+set /a _UNHEALTHY=0
+for %%N in (%EISA%) do (
+    set "ST="
+    for /f "tokens=*" %%S in ('docker inspect -f "{{.State.Status}}" "%%N" 2^>nul') do set "ST=%%S"
+    if defined ST (
+        set /a _FOUND+=1
+        set "HE=n/a"
+        for /f "tokens=*" %%H in ('docker inspect -f "{{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}" "%%N" 2^>nul') do set "HE=%%H"
+        set "STS=-"
+        for /f "tokens=*" %%P in ('docker ps -a --filter "name=^%%N$" --format "{{.Status}}" 2^>nul') do set "STS=%%P"
+        if "!ST!"=="running" set /a _RUNNING+=1
+        if "!HE!"=="healthy" set /a _HEALTHY+=1
+        if "!HE!"=="unhealthy" set /a _UNHEALTHY+=1
+        call :LIST_ROW "%%N" "!ST!" "!HE!" "!STS!"
+    )
+)
+echo.
+if !_FOUND! equ 0 (
+    echo   No EISA containers found - the stack does not appear to be deployed.
+    echo.
+    echo   Use option [2] Start Stack to bring it up.
+) else (
+    echo   Summary: !_FOUND! tracked, !_RUNNING! running, !_HEALTHY! healthy, !_UNHEALTHY! unhealthy
+)
+echo.
+echo   Press any key to return to the main menu...
+pause >nul
+goto :MAIN_MENU
+
+:LIST_ROW
+:: %1=name %2=state %3=health %4=status. Pads each fixed-width column the
+:: same way the macOS sister script does so the table lines up.
+set "_N=%~1                              "
+set "_N=!_N:~0,30!"
+set "_S=%~2          "
+set "_S=!_S:~0,10!"
+set "_H=%~3           "
+set "_H=!_H:~0,11!"
+echo   !_N!  !_S!  !_H!  %~4
+exit /b
+
+
+:: =============================================================================
+:: [5] OLLAMA / LLM MANAGER  (full port of WINDOWS-LLM-MANAGER.BAT)
 :: =============================================================================
 :OLLAMA_BOOT
 where docker >nul 2>nul

@@ -891,7 +891,7 @@ function Render-Templates {
         # previous key. Wipe it so Authelia re-initialises cleanly. Authelia
         # data is just session/2FA state — nothing irreplaceable on a fresh
         # install. users_database.yml is separate and survives.
-        $autheliaDb = Join-Path $ProjectRoot 'persistent-storage/authelia/db.sqlite3'
+        $autheliaDb = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/db.sqlite3'
         if (Test-Path $autheliaDb) {
             Remove-Item $autheliaDb -Force -ErrorAction SilentlyContinue
             Dim '  Wiped stale Authelia db.sqlite3 (encryption key was regenerated).'
@@ -908,11 +908,11 @@ function Render-Templates {
     $renderEnv['TOR_BASIC_AUTH'] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($torCred))
 
     if ([string]::IsNullOrWhiteSpace($Env['DOMAIN'])) {
-        Write-LocalOnlyCaddyfile -OutputPath (Join-Path $ProjectRoot 'persistent-storage/caddy/Caddyfile') -Env $renderEnv
+        Write-LocalOnlyCaddyfile -OutputPath (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/caddy/Caddyfile') -Env $renderEnv
     } else {
         Resolve-Template `
-            (Join-Path $ProjectRoot 'persistent-storage/caddy/Caddyfile.tmpl') `
-            (Join-Path $ProjectRoot 'persistent-storage/caddy/Caddyfile') `
+            (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/caddy/Caddyfile.tmpl') `
+            (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/caddy/Caddyfile') `
             $renderEnv
     }
     # Authelia rejects an empty session.cookies.domain — and 'localhost'
@@ -927,16 +927,16 @@ function Render-Templates {
         $autheliaEnv['DOMAIN'] = 'homelab.local'
     }
     Resolve-Template `
-        (Join-Path $ProjectRoot 'persistent-storage/authelia/configuration.yml.tmpl') `
-        (Join-Path $ProjectRoot 'persistent-storage/authelia/configuration.yml') `
+        (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/configuration.yml.tmpl') `
+        (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/configuration.yml') `
         $autheliaEnv
     Resolve-Template `
         (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/searxng/settings.yml.tmpl') `
         (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/searxng/settings.yml') `
         $renderEnv
 
-    $usersExample = Join-Path $ProjectRoot 'persistent-storage/authelia/users_database.yml.example'
-    $usersFile    = Join-Path $ProjectRoot 'persistent-storage/authelia/users_database.yml'
+    $usersExample = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/users_database.yml.example'
+    $usersFile    = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/users_database.yml'
     if (-not (Test-Path $usersFile) -and (Test-Path $usersExample)) {
         Copy-Item $usersExample $usersFile
     }
@@ -950,9 +950,9 @@ function Render-Templates {
 # ---------------------------------------------------------------------------
 function Repair-BindPaths {
     $bindFiles = @(
-        (Join-Path $ProjectRoot 'persistent-storage/caddy/Caddyfile')
-        (Join-Path $ProjectRoot 'persistent-storage/authelia/configuration.yml')
-        (Join-Path $ProjectRoot 'persistent-storage/authelia/users_database.yml')
+        (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/caddy/Caddyfile')
+        (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/configuration.yml')
+        (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/users_database.yml')
         (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/searxng/settings.yml')
         (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/filebrowser/settings.json')
     )
@@ -986,8 +986,8 @@ function Repair-BindPaths {
 function Ensure-AutheliaUser {
     param($EnvMap)
 
-    $usersFile    = Join-Path $ProjectRoot 'persistent-storage/authelia/users_database.yml'
-    $usersExample = Join-Path $ProjectRoot 'persistent-storage/authelia/users_database.yml.example'
+    $usersFile    = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/users_database.yml'
+    $usersExample = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/users_database.yml.example'
 
     if (-not (Test-Path $usersFile -PathType Leaf) -and (Test-Path $usersExample)) {
         Copy-Item $usersExample $usersFile
@@ -1093,7 +1093,13 @@ function Start-Stack {
         [string[]]$CustomServices = @()
     )
 
-    $arglist = @('compose', '-f', 'docker-compose.yml')
+    # `--progress plain` forces line-by-line output instead of compose v2's
+    # default TTY redraw renderer. When the wizard is launched from the
+    # macOS .command launcher (or the Windows .bat one) compose's in-place
+    # progress updates don't redraw cleanly and you end up with hundreds
+    # of near-identical "[+] Running 20/24 ... Waiting 5.5s" lines for
+    # every healthcheck wait. Plain output is one line per event.
+    $arglist = @('compose', '--progress', 'plain', '-f', 'docker-compose.yml')
     switch ($GpuMode) {
         'nvidia' { $arglist += @('-f', 'docker-compose.nvidia.yml') }
         'amd'    { $arglist += @('-f', 'docker-compose.amd.yml') }
@@ -1121,7 +1127,43 @@ function Start-Stack {
     G ''
     Dim ("  docker " + ($arglist -join ' '))
     G ''
-    & docker @arglist
+
+    # Filter compose's per-event plain output. We keep `--progress plain`
+    # (so events are stable line-per-event instead of a redrawing TTY) but
+    # strip the noise.
+    #
+    # Drop: intermediate lifecycle events (Creating/Created/Starting/Waiting/
+    #       Recreating/etc.) that produce 5+ lines per container and tell
+    #       the user nothing actionable.
+    # Keep + reformat with [OK]: terminal-success events (Started/Healthy/
+    #       Pulled/Running) so each container shows one or two clean rows.
+    # Keep + reformat with [!] : Error / Failed events so problems remain
+    #       loud and obvious.
+    # Pass through unchanged: anything we don't recognise - compose summary
+    # lines, pull-progress (Downloading/Extracting), multi-line errors.
+    $dropPattern = '^\s*(Container|Network|Volume)\s+.+?\s+(Creating|Created|Starting|Waiting|Recreating|Recreated|Stopping|Stopped|Removing|Removed)\s*$'
+    $okPattern   = '^\s*(Container|Network|Volume)\s+(.+?)\s+(Started|Healthy|Pulled|Running)\s*$'
+    $errPattern  = '^\s*(Container|Network|Volume)\s+(.+?)\s+(Error|Failed.*)\s*$'
+
+    & docker @arglist 2>&1 | ForEach-Object {
+        # Coerce both ErrorRecord (from native stderr) and string into a
+        # single string for matching.
+        $line = if ($_ -is [System.Management.Automation.ErrorRecord]) {
+            $_.ToString()
+        } else {
+            [string]$_
+        }
+        if ([string]::IsNullOrWhiteSpace($line)) { return }
+        if ($line -match $dropPattern) { return }
+        if ($line -match $okPattern) {
+            Write-Host ('  [OK] ' + $matches[1] + ' ' + $matches[2] + ' - ' + $matches[3]) -ForegroundColor Green
+        } elseif ($line -match $errPattern) {
+            Write-Host ('  [!]  ' + $matches[1] + ' ' + $matches[2] + ' - ' + $matches[3]) -ForegroundColor Red
+        } else {
+            Write-Host $line
+        }
+    }
+
     if ($LASTEXITCODE -ne 0) {
         Err 'docker compose up failed.'
         exit $LASTEXITCODE
@@ -1183,6 +1225,103 @@ function Wait-Ollama {
         Start-Sleep -Seconds 1
     }
     return $false
+}
+
+# ---------------------------------------------------------------------------
+# Ensure-NativeOllamaInstalled: when the wizard's gpuMode is "native" (Mac
+# Apple Silicon path), make sure the host-installed `ollama` CLI exists and
+# the server is responding on http://127.0.0.1:11434 BEFORE we compose-up.
+# Without this, Start-Stack succeeds (the overlay disables the in-container
+# ollama) but Open WebUI / Local Deep Research / Vane / Hermes all try to
+# reach host.docker.internal:11434 and find nothing, and the auto-pull step
+# in Install-FirstLlm later fails too.
+#
+# Prefers Homebrew (clean CLI install + launchd integration). Falls back to
+# downloading the official universal Ollama.app from GitHub Releases for
+# Macs without brew. No-op on every non-Mac OS - the wizard only ever sets
+# gpuMode to "native" on macOS.
+# ---------------------------------------------------------------------------
+function Ensure-NativeOllamaInstalled {
+    param([string]$GpuMode)
+    if ($GpuMode -ne 'native') { return }
+    if ($script:OS -ne 'Mac') { return }
+
+    $hasCli = $null -ne (Get-Command ollama -ErrorAction SilentlyContinue)
+
+    if ($hasCli) {
+        if (Wait-Ollama -TimeoutSeconds 3) {
+            Ok 'Native ollama already installed and responding on :11434.'
+            return
+        }
+        Dim '  Native ollama is installed but the API is silent. Starting it...'
+        if (Get-Command brew -ErrorAction SilentlyContinue) {
+            & brew services start ollama 2>$null | Out-Null
+        }
+        if (-not (Wait-Ollama -TimeoutSeconds 30)) {
+            # Last resort: detached `ollama serve` so it survives this script.
+            Start-Process -FilePath 'ollama' -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+        }
+        if (Wait-Ollama -TimeoutSeconds 30) {
+            Ok 'Native ollama started.'
+        } else {
+            Err 'Ollama is installed but the API did not come up within 60s.'
+            Dim '  Try manually: brew services restart ollama   (or: ollama serve)'
+        }
+        return
+    }
+
+    # Not installed - install it.
+    G ''
+    Step 'Installing native ollama (Apple Metal-accelerated)' `
+         'You picked NATIVE Ollama in Step 3b. The "ollama" CLI is not on this Mac yet, so we will install it now.'
+
+    if (Get-Command brew -ErrorAction SilentlyContinue) {
+        Dim '  Homebrew detected - using `brew install ollama` (recommended).'
+        & brew install ollama
+        if ($LASTEXITCODE -ne 0) {
+            Err 'brew install ollama failed - see output above.'
+            Dim '  Skipping native install. The stack will still come up, but Open'
+            Dim '  WebUI / Hermes / Vane / LDR will have no LLM backend until you'
+            Dim '  install ollama manually.'
+            return
+        }
+        Dim '  Starting ollama as a background launchd service...'
+        & brew services start ollama 2>$null | Out-Null
+    } else {
+        Dim '  Homebrew not found. Downloading the official Ollama Mac app from:'
+        Dim '    https://github.com/ollama/ollama/releases/latest'
+        $tmpDir  = Join-Path ([System.IO.Path]::GetTempPath()) ("eisa-ollama-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmpDir | Out-Null
+        $zipPath = Join-Path $tmpDir 'Ollama-darwin.zip'
+        try {
+            Invoke-WebRequest -Uri 'https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip' `
+                              -OutFile $zipPath -UseBasicParsing
+        } catch {
+            Err ("Download failed: " + $_.Exception.Message)
+            Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+            return
+        }
+        Dim '  Extracting Ollama.app to /Applications ...'
+        # ditto preserves macOS codesign + quarantine metadata better than unzip.
+        & ditto -xk $zipPath '/Applications/'
+        Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+        if ($LASTEXITCODE -ne 0) {
+            Err 'Extracting to /Applications failed.'
+            return
+        }
+        Dim '  Launching Ollama.app (first launch installs the CLI to /usr/local/bin'
+        Dim '  and starts the background daemon)...'
+        & open -a Ollama 2>$null
+    }
+
+    Dim '  Waiting for the native ollama API to come up at http://127.0.0.1:11434 ...'
+    if (Wait-Ollama -TimeoutSeconds 90) {
+        Ok 'Native ollama is up.'
+    } else {
+        Err 'Ollama is installed but the API did not respond within 90s.'
+        Dim '  If you used the .app installer, look for a one-time "Install CLI"'
+        Dim '  prompt in the Ollama app window and accept it, then re-run.'
+    }
 }
 
 function Get-OllamaModelCount {
@@ -1376,7 +1515,7 @@ function Show-Summary {
         G '    Open WebUI (chat)       http://localhost:9002'
         G '    Ollama API              http://localhost:11434'
         G '    SearXNG (search)        http://localhost:8031'
-        G '    Local Deep Research     http://localhost:5000'
+        G '    Local Deep Research     http://localhost:5005'
         G '    Vane                    http://localhost:3000'
         G '    Hermes Workspace        http://localhost:3030'
         G '    Hermes Gateway (API)    http://localhost:8642'
@@ -1432,6 +1571,9 @@ function Show-Summary {
             Dim "    search.$d      ->  HTTP  caddy:80   SearXNG"
             Dim "    n8n.$d         ->  HTTP  caddy:80   n8n workflows"
             Dim "    hermes.$d      ->  HTTP  caddy:80   Hermes Workspace"
+            Dim "    vane.$d        ->  HTTP  caddy:80   Vane AI engine"
+            Dim "    research.$d    ->  HTTP  caddy:80   Local Deep Research"
+            Dim "    qdrant.$d      ->  HTTP  caddy:80   Qdrant vector DB"
         }
         Dim "    portainer.$d   ->  HTTP  caddy:80   Portainer (SSO)"
         Dim "    auth.$d        ->  HTTP  caddy:80   Authelia login (REQUIRED)"
@@ -1531,7 +1673,12 @@ if ($StartOnly) {
     # Auto-detect tunnel: only enable if the user supplied a real token.
     $stateBlob.useTunnel = -not (Test-Placeholder $envMap['CLOUDFLARE_TUNNEL_TOKEN'])
     # Auto-detect GPU mode if not already persisted by first-run.
-    if (-not $stateBlob.gpuMode -or $stateBlob.gpuMode -notin @('cpu','nvidia','amd')) {
+    # 'native' is the macOS Apple-Silicon path (host-installed ollama via
+    # Homebrew + the docker-compose.ollama-native.yml overlay) - must be
+    # in this allowlist or -StartOnly will silently overwrite the saved
+    # choice with re-detection (which returns 'cpu' on Mac) and the
+    # containerised ollama will be pulled / started instead.
+    if (-not $stateBlob.gpuMode -or $stateBlob.gpuMode -notin @('cpu','nvidia','amd','native')) {
         $stateBlob.gpuMode = Get-OllamaGpuMode
         Dim "  Detected GPU mode: $($stateBlob.gpuMode.ToUpper())"
     }
@@ -1561,6 +1708,11 @@ if ($StartOnly) {
         $hasAi    = $profiles -contains 'ai'
         $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity')
     }
+
+    # In native mode the host needs ollama on :11434 BEFORE compose comes
+    # up - otherwise Open WebUI / Hermes / LDR / Vane all start with their
+    # OLLAMA_BASE_URL pointing at host.docker.internal:11434 and find nothing.
+    Ensure-NativeOllamaInstalled -GpuMode $gpuMode
 
     Start-Stack -Profiles $profiles -UseTunnel $useTunnel -GpuMode $gpuMode -CustomServices $customSvc
 
@@ -1614,6 +1766,12 @@ Ensure-AutheliaUser -EnvMap $result.Env
 Write-State -State $stateBlob
 
 if (-not $NoStart) {
+    # If the user picked NATIVE in Step 3b on Mac, install + start the host
+    # ollama before compose-up so the AI services (open-webui, hermes-agent,
+    # local-deep-research, vane) can reach host.docker.internal:11434 from
+    # inside their containers as soon as they boot.
+    Ensure-NativeOllamaInstalled -GpuMode $result.GpuMode
+
     Start-Stack -Profiles $result.Profiles -UseTunnel $result.UseTunnel -GpuMode $result.GpuMode -CustomServices $result.CustomServices
 }
 
