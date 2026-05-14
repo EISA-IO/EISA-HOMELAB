@@ -825,6 +825,11 @@ function Invoke-Wizard {
         @{ Key='LINKWARDEN_DB_PASSWORD';         Bytes=20; Mode='hex' }
         @{ Key='DB_PASSWORD';                    Bytes=20; Mode='hex' }
         @{ Key='TOR_VNC_PW';                     Bytes=12; Mode='hex' }
+        @{ Key='SONARR_API_KEY';                 Bytes=16; Mode='hex' }
+        @{ Key='RADARR_API_KEY';                 Bytes=16; Mode='hex' }
+        @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
+        @{ Key='SEERR_API_KEY';                  Bytes=16; Mode='hex' }
+        @{ Key='JELLYFIN_ADMIN_PASSWORD';        Bytes=12; Mode='hex' }
     )
     foreach ($s in $genSpecs) {
         if ($Reconfigure -or (Test-Placeholder $envMap[$s.Key])) {
@@ -985,6 +990,31 @@ http://file.localhost {
 
 http://photos.localhost {
     reverse_proxy immich-server:2283
+}
+
+# ===== REQUEST / DOWNLOAD STACK =====
+http://request.localhost {
+    reverse_proxy seerr:5055
+}
+
+http://sonarr.localhost {
+    reverse_proxy sonarr:8989
+}
+
+http://radarr.localhost {
+    reverse_proxy radarr:7878
+}
+
+http://prowlarr.localhost {
+    reverse_proxy prowlarr:9696
+}
+
+# qBittorrent rejects Host headers it doesn't recognise; override so the
+# WebUI accepts the proxied request as if it came in on its own address.
+http://qb.localhost {
+    reverse_proxy qbittorrent:8080 {
+        header_up Host {upstream_hostport}
+    }
 }
 
 # Catch-all: any *.localhost we didn't map gets a friendly hint.
@@ -1148,6 +1178,870 @@ function Ensure-AutheliaUser {
 }
 
 # ---------------------------------------------------------------------------
+# Wait-Url: poll a URL until it returns 2xx/3xx (or 401, which means the
+# app is up and refusing us — also a success for "boot detection"). Used
+# by Configure-MediaStack to know when each *arr is ready to be wired.
+# ---------------------------------------------------------------------------
+function Wait-Url {
+    param([string]$Url, [int]$TimeoutSeconds = 120, [hashtable]$Headers = $null)
+    # Extract host + port for the TCP fallback. Invoke-WebRequest is unreliable
+    # across PS versions for distinguishing "service up but 401" from "service
+    # down" (PS7's HttpRequestException doesn't always carry a Response), so we
+    # treat a successful TCP socket connect as proof the listener is alive —
+    # which is what callers actually mean by "wait for the app to come up".
+    $uri = [Uri]$Url
+    $remoteHost = $uri.Host
+    $remotePort = if ($uri.Port -gt 0) { $uri.Port } else { if ($uri.Scheme -eq 'https') { 443 } else { 80 } }
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -Headers $Headers -ErrorAction Stop
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) { return $true }
+        } catch {
+            # Any HTTP response (incl. 401/403/4xx) means the service is up.
+            # Probe TCP directly to confirm before sleeping again.
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            try {
+                $iar = $tcp.BeginConnect($remoteHost, $remotePort, $null, $null)
+                $ok = $iar.AsyncWaitHandle.WaitOne(3000, $false)
+                if ($ok -and $tcp.Connected) { $tcp.EndConnect($iar); return $true }
+            } catch {
+            } finally {
+                $tcp.Close()
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
+# Configure-MediaStack: idempotent API-driven wiring of the request /
+# download stack. Runs once after the containers are up. Safe on re-runs:
+# every step checks "already done?" before POSTing.
+#
+# What it sets up:
+#   - Sonarr: qBittorrent download client + /tv root folder + tv-sonarr cat
+#   - Radarr: qBittorrent download client + /movies root folder + radarr cat
+#   - Prowlarr: Sonarr + Radarr registered as applications (auto-sync indexers)
+#   - Prowlarr: 5 public no-signup indexers (1337x, YTS, EZTV, TheRARBG, TPB)
+#   - 1080p preference: Sonarr/Radarr's built-in "HD-1080p" profile id is
+#     resolved + handed to Seerr settings.json so requests are 1080p by default
+#
+# Seerr's media-server step still needs user interaction (Jellyfin API key
+# generation), so we stop just short of that. The summary prints exactly
+# what the user clicks through in Seerr's first-run wizard.
+# ---------------------------------------------------------------------------
+function Configure-MediaStack {
+    param($EnvMap)
+
+    $sonarrUrl   = 'http://localhost:8989'
+    $radarrUrl   = 'http://localhost:7878'
+    $prowlarrUrl = 'http://localhost:9696'
+    $sonarrKey   = [string]$EnvMap['SONARR_API_KEY']
+    $radarrKey   = [string]$EnvMap['RADARR_API_KEY']
+    $prowlarrKey = [string]$EnvMap['PROWLARR_API_KEY']
+
+    if ((Test-Placeholder $sonarrKey) -or (Test-Placeholder $radarrKey) -or (Test-Placeholder $prowlarrKey)) {
+        Dim '  Media-stack API keys still placeholders — skipping auto-config.'
+        return
+    }
+
+    Step 'Step 6 — Wiring Seerr / Sonarr / Radarr / Prowlarr / qBittorrent' 'One-time auto-config. Waiting for each app to boot, then POSTing settings via their REST APIs. Safe to re-run.'
+
+    # ---- Wait for each app to be reachable -----------------------------
+    foreach ($svc in @(
+        @{ Url="$sonarrUrl/ping";       Name='Sonarr' }
+        @{ Url="$radarrUrl/ping";       Name='Radarr' }
+        @{ Url="$prowlarrUrl/ping";     Name='Prowlarr' }
+        @{ Url='http://localhost:9081'; Name='qBittorrent' }
+    )) {
+        Dim "  Waiting for $($svc.Name) to come up..."
+        if (-not (Wait-Url -Url $svc.Url -TimeoutSeconds 120)) {
+            Err "  $($svc.Name) never responded on $($svc.Url). Skipping auto-config."
+            return
+        }
+    }
+    Ok 'All apps are up.'
+
+    # ---- qBittorrent: set admin/adminadmin via API (subnet whitelist
+    #      makes the request unauthenticated since 127.0.0.1 is whitelisted).
+    try {
+        $qbBase = 'http://localhost:9081'
+        $prefs  = '{"web_ui_username":"admin","web_ui_password":"adminadmin"}'
+        $resp = Invoke-WebRequest -Uri "$qbBase/api/v2/app/setPreferences" `
+            -Method POST -Body "json=$([uri]::EscapeDataString($prefs))" `
+            -ContentType 'application/x-www-form-urlencoded' `
+            -UseBasicParsing -ErrorAction Stop
+        if ($resp.StatusCode -eq 200) {
+            Ok 'qBittorrent: credentials set to admin / adminadmin.'
+        } else {
+            Dim "  qBittorrent: setPreferences returned $($resp.StatusCode)."
+        }
+    } catch {
+        Dim "  qBittorrent: could not set credentials ($($_.Exception.Message)). Default login is in 'docker logs qbittorrent'."
+    }
+
+    # ---- Helpers for Sonarr / Radarr (both use v3 API) -----------------
+    function Invoke-ArrApi {
+        param([string]$BaseUrl, [string]$ApiKey, [string]$Path, [string]$Method = 'GET', $Body = $null, [string]$ApiVersion = 'v3')
+        $url = "$BaseUrl/api/$ApiVersion/$($Path.TrimStart('/'))"
+        $headers = @{ 'X-Api-Key' = $ApiKey; 'Accept' = 'application/json' }
+        try {
+            if ($Body) {
+                $json = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 10 -Compress }
+                return Invoke-RestMethod -Uri $url -Method $Method -Headers $headers -Body $json -ContentType 'application/json' -ErrorAction Stop
+            } else {
+                return Invoke-RestMethod -Uri $url -Method $Method -Headers $headers -ErrorAction Stop
+            }
+        } catch {
+            $msg = $_.Exception.Message
+            $body = ''
+            if ($_.ErrorDetails) { $body = $_.ErrorDetails.Message }
+            throw "API $Method $url failed: $msg`n$body"
+        }
+    }
+
+    # Add qBittorrent as a download client to Sonarr / Radarr.
+    function Add-QbDownloadClient {
+        param([string]$BaseUrl, [string]$ApiKey, [string]$AppName, [string]$Category)
+        # Idempotent: skip if a qBittorrent download client is already configured.
+        $existing = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'downloadclient'
+        $hasQb = $existing | Where-Object { $_.implementation -eq 'QBittorrent' }
+        if ($hasQb) {
+            Dim "  ${AppName}: qBittorrent already registered as download client."
+            return
+        }
+        $payload = @{
+            enable          = $true
+            protocol        = 'torrent'
+            priority        = 1
+            removeCompletedDownloads = $true
+            removeFailedDownloads    = $true
+            name            = 'qBittorrent'
+            fields          = @(
+                @{ name = 'host';                  value = 'qbittorrent' }
+                @{ name = 'port';                  value = 8080 }
+                @{ name = 'useSsl';                value = $false }
+                @{ name = 'urlBase';               value = '' }
+                @{ name = 'username';              value = 'admin' }
+                @{ name = 'password';              value = 'adminadmin' }
+                @{ name = 'tvCategory';            value = $Category }
+                @{ name = 'movieCategory';         value = $Category }
+                @{ name = 'recentTvPriority';      value = 0 }
+                @{ name = 'olderTvPriority';       value = 0 }
+                @{ name = 'recentMoviePriority';   value = 0 }
+                @{ name = 'olderMoviePriority';    value = 0 }
+                @{ name = 'initialState';          value = 0 }
+                @{ name = 'sequentialOrder';       value = $false }
+                @{ name = 'firstAndLast';          value = $false }
+            )
+            implementationName = 'qBittorrent'
+            implementation     = 'QBittorrent'
+            configContract     = 'QBittorrentSettings'
+            tags               = @()
+        }
+        $null = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'downloadclient' -Method POST -Body $payload
+        Ok "${AppName}: qBittorrent added as download client (category=$Category)."
+    }
+
+    # Add a root folder (/tv for sonarr, /movies for radarr). The most common
+    # failure is the host path not existing before docker compose up — Docker
+    # then auto-creates a root-owned empty mount that the LSIO 'abc' user
+    # cannot write to. We catch the 400 and tell the user how to fix it
+    # instead of aborting the rest of the configurator.
+    function Add-RootFolder {
+        param([string]$BaseUrl, [string]$ApiKey, [string]$AppName, [string]$Path)
+        $existing = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'rootfolder'
+        if ($existing | Where-Object { $_.path -eq $Path }) {
+            Dim "  ${AppName}: root folder $Path already configured."
+            return
+        }
+        try {
+            $null = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'rootfolder' -Method POST -Body @{ path = $Path }
+            Ok "${AppName}: root folder $Path added."
+        } catch {
+            $err = $_.Exception.Message
+            if ($err -match 'not writable|FolderWritableValidator') {
+                Err "  ${AppName}: root folder $Path is not writable inside the container."
+                Dim '    Likely cause: host bind-mount path does not exist before docker compose up,'
+                Dim '    so Docker auto-created a root-owned empty mount. Fix:'
+                Dim "      1. Create the host path: mkdir <your TV_SHOWS_PATH or MOVIES_PATH>"
+                Dim '      2. Re-run the launcher and pick [1] First-Run Setup again.'
+                Dim '    Other config (download client, indexers) is still being applied.'
+            } else {
+                Err "  ${AppName}: root folder add failed: $err"
+            }
+        }
+    }
+
+    # Find the built-in "HD-1080p" quality profile id (used by Seerr).
+    function Get-1080pProfileId {
+        param([string]$BaseUrl, [string]$ApiKey)
+        $profiles = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'qualityprofile'
+        $hd1080 = $profiles | Where-Object { $_.name -eq 'HD-1080p' } | Select-Object -First 1
+        if (-not $hd1080) {
+            # Fallback: profile that contains the "Bluray-1080p" quality
+            $hd1080 = $profiles | Where-Object { $_.items.quality.name -contains 'Bluray-1080p' } | Select-Object -First 1
+        }
+        return $hd1080.id
+    }
+
+    # Find or create a custom format by name from a schema template. Returns
+    # the format id. $Mutator is a scriptblock that receives the template
+    # spec object and tweaks its fields before we POST it.
+    function Get-Or-Create-Format {
+        param([string]$BaseUrl, [string]$ApiKey, [string]$AppName, [string]$Name, [string]$Implementation, [scriptblock]$Mutator)
+        $formats = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'customformat'
+        $existing = $formats | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+        if ($existing) {
+            Dim "  ${AppName}: custom format '${Name}' already present (id=$($existing.id))."
+            return $existing.id
+        }
+        $schema = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'customformat/schema'
+        $spec   = $schema | Where-Object { $_.implementation -eq $Implementation } | Select-Object -First 1
+        if (-not $spec) {
+            Dim "  ${AppName}: no ${Implementation} in schema — skipping ${Name}."
+            return $null
+        }
+        $spec | Add-Member -NotePropertyName name -NotePropertyValue ($Implementation -replace 'Specification$','') -Force
+        $spec.negate   = $false
+        $spec.required = $true
+        & $Mutator $spec
+        $cfBody = @{
+            name                            = $Name
+            includeCustomFormatWhenRenaming = $false
+            specifications                  = @($spec)
+        }
+        $created = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'customformat' -Method POST -Body $cfBody
+        Ok "${AppName}: created '${Name}' custom format (id=$($created.id))."
+        return $created.id
+    }
+
+    # Apply size-cap + English-only constraints to the HD-1080p profile.
+    # Sonarr v4 has no profile.language field (language was migrated to
+    # Custom Formats), so we enforce English via a "Not English" custom
+    # format with -10000 score plus minFormatScore=0. Radarr keeps the
+    # built-in profile.language for parity with how its UI exposes it.
+    # The 4 GB cap is a SizeSpecification "min=4, max=999999" (units = GB)
+    # with -10000 score on both apps. Idempotent.
+    function Set-ArrSizeAndLanguage {
+        param([string]$BaseUrl, [string]$ApiKey, [string]$AppName)
+
+        $sizeFormatId = Get-Or-Create-Format -BaseUrl $BaseUrl -ApiKey $ApiKey -AppName $AppName `
+            -Name 'Size > 4 GB' -Implementation 'SizeSpecification' -Mutator {
+                param($s)
+                foreach ($f in $s.fields) {
+                    if ($f.name -eq 'min') { $f.value = 4 }
+                    elseif ($f.name -eq 'max') { $f.value = 999999 }
+                }
+            }
+
+        # Sonarr-only: "Not English" via LanguageSpecification + exceptLanguage=true.
+        $notEnglishId = $null
+        if ($AppName -eq 'Sonarr') {
+            $notEnglishId = Get-Or-Create-Format -BaseUrl $BaseUrl -ApiKey $ApiKey -AppName $AppName `
+                -Name 'Not English' -Implementation 'LanguageSpecification' -Mutator {
+                    param($s)
+                    foreach ($f in $s.fields) {
+                        if ($f.name -eq 'value')          { $f.value = 1 }       # English
+                        elseif ($f.name -eq 'exceptLanguage') { $f.value = $true }  # match anything OTHER than English
+                    }
+                }
+        }
+
+        # Apply to HD-1080p profile.
+        $profiles = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'qualityprofile'
+        $hd = $profiles | Where-Object { $_.name -eq 'HD-1080p' } | Select-Object -First 1
+        if (-not $hd) {
+            Dim "  ${AppName}: HD-1080p profile missing — skipping language/size lock."
+            return
+        }
+        # Radarr exposes profile.language; Sonarr v4 doesn't. Use Add-Member -Force
+        # to set it only if it already exists on the object (so PowerShell doesn't
+        # throw on the missing-property case).
+        if ($hd.PSObject.Properties.Match('language').Count -gt 0) {
+            $hd.language = @{ id = 1; name = 'English' }
+        }
+        $hd.minFormatScore = 0
+
+        # Build the formatItems array — preserve any existing entries, flip our
+        # caps to -10000, append new ones if missing.
+        $targetScores = @{}
+        if ($sizeFormatId) { $targetScores[$sizeFormatId] = @{ Name = 'Size > 4 GB'; Score = -10000 } }
+        if ($notEnglishId) { $targetScores[$notEnglishId] = @{ Name = 'Not English'; Score = -10000 } }
+        $items = @()
+        $seen = @{}
+        foreach ($fi in $hd.formatItems) {
+            if ($targetScores.ContainsKey($fi.format)) {
+                $fi.score = $targetScores[$fi.format].Score
+                $seen[$fi.format] = $true
+            }
+            $items += $fi
+        }
+        foreach ($id in $targetScores.Keys) {
+            if (-not $seen.ContainsKey($id)) {
+                $items += @{ format = $id; name = $targetScores[$id].Name; score = $targetScores[$id].Score }
+            }
+        }
+        $hd.formatItems = $items
+
+        $null = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path "qualityprofile/$($hd.id)" -Method PUT -Body $hd
+        Ok "${AppName}: HD-1080p locked to English + reject any release > 4 GB."
+    }
+
+    try {
+        Add-QbDownloadClient -BaseUrl $sonarrUrl -ApiKey $sonarrKey -AppName 'Sonarr' -Category 'tv-sonarr'
+        Add-RootFolder       -BaseUrl $sonarrUrl -ApiKey $sonarrKey -AppName 'Sonarr' -Path '/tv'
+        $sonarrProfileId = Get-1080pProfileId -BaseUrl $sonarrUrl -ApiKey $sonarrKey
+        Set-ArrSizeAndLanguage -BaseUrl $sonarrUrl -ApiKey $sonarrKey -AppName 'Sonarr'
+        Ok ("Sonarr: HD-1080p profile id = $sonarrProfileId.")
+    } catch { Err "  Sonarr config failed: $_" }
+
+    try {
+        Add-QbDownloadClient -BaseUrl $radarrUrl -ApiKey $radarrKey -AppName 'Radarr' -Category 'movies-radarr'
+        Add-RootFolder       -BaseUrl $radarrUrl -ApiKey $radarrKey -AppName 'Radarr' -Path '/movies'
+        $radarrProfileId = Get-1080pProfileId -BaseUrl $radarrUrl -ApiKey $radarrKey
+        Set-ArrSizeAndLanguage -BaseUrl $radarrUrl -ApiKey $radarrKey -AppName 'Radarr'
+        Ok ("Radarr: HD-1080p profile id = $radarrProfileId.")
+    } catch { Err "  Radarr config failed: $_" }
+
+    # ---- Prowlarr: register Sonarr + Radarr as apps, then add indexers
+    try {
+        # Apps
+        $apps = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'applications' -ApiVersion 'v1'
+        foreach ($app in @(
+            @{ Name='Sonarr'; Impl='Sonarr'; Contract='SonarrSettings'; SyncType='Standard'; Url='http://sonarr:8989'; Key=$sonarrKey }
+            @{ Name='Radarr'; Impl='Radarr'; Contract='RadarrSettings'; SyncType='Standard'; Url='http://radarr:7878'; Key=$radarrKey }
+        )) {
+            if ($apps | Where-Object { $_.name -eq $app.Name }) {
+                Dim "  Prowlarr: $($app.Name) already registered."
+                continue
+            }
+            $payload = @{
+                name              = $app.Name
+                syncLevel         = 'fullSync'
+                fields            = @(
+                    @{ name = 'prowlarrUrl';   value = 'http://prowlarr:9696' }
+                    @{ name = 'baseUrl';       value = $app.Url }
+                    @{ name = 'apiKey';        value = $app.Key }
+                    @{ name = 'syncCategories'; value = @(2000,2010,2020,2030,2040,2045,2050,2060,5000,5010,5020,5030,5040,5045,5050) }
+                )
+                implementationName = $app.Impl
+                implementation     = $app.Impl
+                configContract     = $app.Contract
+                tags               = @()
+            }
+            $null = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'applications' -ApiVersion 'v1' -Method POST -Body $payload
+            Ok "Prowlarr: registered $($app.Name) as application."
+        }
+
+        # Public indexers (no signup, no creds). Use Prowlarr's indexer
+        # schema endpoint to fetch each definition then POST it back so we
+        # don't have to hard-code the schema (which changes between versions).
+        # Indexers REQUIRE appProfileId since Prowlarr 1.x — fetch the default
+        # app profile id once so the POST validates.
+        $appProfiles = @()
+        try {
+            $appProfiles = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'appprofile' -ApiVersion 'v1'
+        } catch {
+            Dim "  Prowlarr: could not list app profiles ($($_.Exception.Message)). Using id=1."
+        }
+        $defaultAppProfileId = if ($appProfiles -and $appProfiles.Count -gt 0) { $appProfiles[0].id } else { 1 }
+        Dim "  Prowlarr: using app profile id=$defaultAppProfileId for new indexers."
+
+        # Public, no-signup indexers that exist in Prowlarr's current schema.
+        # Some (1337x) are Cloudflare-fronted and won't return results until
+        # the user adds a FlareSolverr companion container — adding them here
+        # is still useful because they'll work the moment FlareSolverr is up.
+        # TheRARBG / ThePirateBay are intentionally NOT in this list: their
+        # entries were removed/renamed in Prowlarr and the POST 400s.
+        $indexerNames = @('1337x','YTS','EZTV','Knaben','LimeTorrents','TorrentGalaxyClone','Internet Archive')
+        $existingIdx = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'indexer' -ApiVersion 'v1'
+        $schema = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'indexer/schema' -ApiVersion 'v1'
+        foreach ($name in $indexerNames) {
+            if ($existingIdx | Where-Object { $_.name -eq $name }) {
+                Dim "  Prowlarr: indexer $name already present."
+                continue
+            }
+            $tpl = $schema | Where-Object { $_.name -eq $name } | Select-Object -First 1
+            if (-not $tpl) {
+                Dim "  Prowlarr: no schema for $name (skipped — upstream may have renamed it)."
+                continue
+            }
+            $tpl.enable = $true
+            # appProfileId lives at the top level of the indexer object; the
+            # schema endpoint returns id=0 (template) so we have to overwrite.
+            $tpl | Add-Member -NotePropertyName appProfileId -NotePropertyValue $defaultAppProfileId -Force
+            try {
+                $null = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'indexer' -ApiVersion 'v1' -Method POST -Body $tpl
+                Ok "Prowlarr: added indexer $name."
+            } catch {
+                Dim "  Prowlarr: $name could not be added ($($_.Exception.Message)) — skipped."
+            }
+        }
+    } catch {
+        Err "  Prowlarr config failed: $_"
+    }
+
+    # ---- Persist resolved profile ids for the user's reference.
+    if ($sonarrProfileId) { $EnvMap['SONARR_PROFILE_ID_1080P'] = [string]$sonarrProfileId }
+    if ($radarrProfileId) { $EnvMap['RADARR_PROFILE_ID_1080P'] = [string]$radarrProfileId }
+    Write-EnvFile $EnvFile $EnvMap
+
+    # ---- Bootstrap Jellyfin first-run + Seerr admin --------------------
+    # Seerr's first admin user can only be created by signing in via a media
+    # server admin (Plex/Jellyfin/Emby), so we run Jellyfin's startup
+    # wizard programmatically first, then re-use the same admin creds to
+    # bootstrap Seerr. Both are idempotent — skip if already configured.
+    $jfAdminUser = [string]$EnvMap['JELLYFIN_ADMIN_USERNAME']
+    $jfAdminPass = [string]$EnvMap['JELLYFIN_ADMIN_PASSWORD']
+    if ([string]::IsNullOrWhiteSpace($jfAdminUser)) { $jfAdminUser = 'admin' }
+    if ([string]::IsNullOrWhiteSpace($jfAdminPass) -or (Test-Placeholder $jfAdminPass)) {
+        Dim '  Skipping Jellyfin / Seerr auto-config: JELLYFIN_ADMIN_PASSWORD is unset.'
+    } else {
+        $bootstrapped = Bootstrap-Jellyfin -EnvMap $EnvMap
+        if ($bootstrapped) {
+            $cookieJar = Bootstrap-Seerr -EnvMap $EnvMap
+            if ($cookieJar) {
+                Configure-SeerrServers -EnvMap $EnvMap -Session $cookieJar
+            }
+        }
+    }
+
+    G ''
+    Ok 'Media stack wired. Open http://request.localhost to start requesting:'
+    Dim "  Login: $jfAdminUser / `$JELLYFIN_ADMIN_PASSWORD  (cleartext in files/.env)"
+    Dim '  Sonarr + Radarr defaults: HD-1080p, English-only, reject any release > 4 GB.'
+}
+
+# ---------------------------------------------------------------------------
+# Bootstrap-Jellyfin: completes Jellyfin's first-run wizard via its REST API
+# (POST /Startup/Configuration -> /Startup/User -> /Startup/Complete), then
+# generates a long-lived API key and stores it in .env as JELLYFIN_API_KEY.
+#
+# Returns $true if Jellyfin is now bootstrapped (newly or pre-existing AND
+# we have admin creds that work), $false if we should skip Seerr auto-setup
+# (e.g. Jellyfin was set up out-of-band and we don't know the password).
+# ---------------------------------------------------------------------------
+function Bootstrap-Jellyfin {
+    param($EnvMap)
+    $jfBase = 'http://localhost:9014'
+    $user   = [string]$EnvMap['JELLYFIN_ADMIN_USERNAME']
+    $pass   = [string]$EnvMap['JELLYFIN_ADMIN_PASSWORD']
+
+    if (-not (Wait-Url -Url "$jfBase/System/Info/Public" -TimeoutSeconds 120)) {
+        Err '  Jellyfin never responded. Skipping Seerr auto-config.'
+        return $false
+    }
+
+    $public = $null
+    try {
+        $public = Invoke-RestMethod -Uri "$jfBase/System/Info/Public" -UseBasicParsing -ErrorAction Stop
+    } catch {
+        Err "  Could not read Jellyfin status: $($_.Exception.Message)"
+        return $false
+    }
+
+    # Header that Jellyfin uses to authorise pre-login API calls.
+    $emby = 'MediaBrowser Client="eisa-bootstrap", Device="setup", DeviceId="ehu-setup-1", Version="1.0"'
+
+    if (-not $public.StartupWizardCompleted) {
+        Dim '  Jellyfin first-run wizard not finished — running it now...'
+        try {
+            # NOTE: order matters. POST /Startup/User MUST come before
+            # POST /Startup/Configuration on a clean install. With the
+            # opposite order Jellyfin's UpdateStartupUser throws
+            # "Sequence contains no elements" because Configuration's
+            # side-effects move the pre-seeded "root" user out of the
+            # _userManager.Users collection that the User endpoint
+            # iterates. Calling /Startup/User first finds and renames
+            # the seeded user cleanly. (Reproduces on every released
+            # 10.10.x and 10.11.x; upstream fix is in main only —
+            # jellyfin#14576 was closed as not-planned.)
+            $userBody = @{ Name=$user; Password=$pass } | ConvertTo-Json
+            Invoke-WebRequest -Uri "$jfBase/Startup/User" -Method POST `
+                -Headers @{ 'Authorization' = $emby } `
+                -ContentType 'application/json' -Body $userBody -UseBasicParsing -ErrorAction Stop | Out-Null
+            $cfgBody = @{ UICulture='en-US'; MetadataCountryCode='US'; PreferredMetadataLanguage='en' } | ConvertTo-Json
+            Invoke-WebRequest -Uri "$jfBase/Startup/Configuration" -Method POST `
+                -Headers @{ 'Authorization' = $emby } `
+                -ContentType 'application/json' -Body $cfgBody -UseBasicParsing -ErrorAction Stop | Out-Null
+            Invoke-WebRequest -Uri "$jfBase/Startup/Complete" -Method POST `
+                -Headers @{ 'Authorization' = $emby } `
+                -UseBasicParsing -ErrorAction Stop | Out-Null
+            Ok "Jellyfin admin user '$user' created."
+        } catch {
+            Err "  Jellyfin first-run failed: $($_.Exception.Message)"
+            return $false
+        }
+    } else {
+        Dim '  Jellyfin already initialised — verifying admin login works.'
+    }
+
+    # Verify admin creds work (this also gives us a token for /Auth/Keys).
+    try {
+        $loginBody = @{ Username = $user; Pw = $pass } | ConvertTo-Json
+        $loginResp = Invoke-RestMethod -Uri "$jfBase/Users/AuthenticateByName" -Method POST `
+            -Headers @{ 'Authorization' = $emby } `
+            -ContentType 'application/json' -Body $loginBody -ErrorAction Stop
+        $token = $loginResp.AccessToken
+    } catch {
+        Err "  Jellyfin admin login failed ($user) — Seerr auto-config skipped."
+        Dim '    Likely cause: Jellyfin was set up out-of-band with a different password.'
+        Dim "    Fix: log into http://movie.localhost as your real admin, then finish Seerr at"
+        Dim '    http://request.localhost using those credentials.'
+        return $false
+    }
+
+    # Generate a long-lived API key if we don't have one yet.
+    if (Test-Placeholder $EnvMap['JELLYFIN_API_KEY']) {
+        try {
+            $authedHeader = 'MediaBrowser Token="' + $token + '", Client="eisa", Device="setup", DeviceId="ehu-setup-1", Version="1.0"'
+            Invoke-WebRequest -Uri "$jfBase/Auth/Keys?App=eisa-homelab" -Method POST `
+                -Headers @{ 'Authorization' = $authedHeader } `
+                -UseBasicParsing -ErrorAction Stop | Out-Null
+            $keysResp = Invoke-RestMethod -Uri "$jfBase/Auth/Keys" `
+                -Headers @{ 'Authorization' = $authedHeader } -ErrorAction Stop
+            $newKey = ($keysResp.Items | Where-Object { $_.AppName -eq 'eisa-homelab' } | Select-Object -First 1).AccessToken
+            if ($newKey) {
+                $EnvMap['JELLYFIN_API_KEY'] = $newKey
+                Write-EnvFile $EnvFile $EnvMap
+                Ok 'Jellyfin API key generated and saved to .env.'
+            }
+        } catch {
+            Dim "  Could not generate Jellyfin API key: $($_.Exception.Message)"
+        }
+    }
+
+    return $true
+}
+
+# ---------------------------------------------------------------------------
+# Bootstrap-Seerr: POSTs to /api/v1/auth/jellyfin with Jellyfin admin creds.
+# Seerr's auth route detects "no admin user yet" + "user is Jellyfin admin"
+# and auto-creates the Seerr admin user with id=1. Returns the captured
+# WebSession (cookies) for chained API calls; $null on failure.
+# ---------------------------------------------------------------------------
+function Bootstrap-Seerr {
+    param($EnvMap)
+    $seerrBase = 'http://localhost:5055'
+
+    if (-not (Wait-Url -Url "$seerrBase/api/v1/status" -TimeoutSeconds 120)) {
+        Err '  Seerr never responded on port 5055. Skipping auto-setup.'
+        return $null
+    }
+
+    # Idempotent: if Seerr already has a media server configured + a user,
+    # we have nothing to do here.
+    try {
+        $status = Invoke-RestMethod -Uri "$seerrBase/api/v1/status" -ErrorAction Stop
+        if ($status.commitTag -or $status.version) {
+            $publicSettings = Invoke-RestMethod -Uri "$seerrBase/api/v1/settings/public" -ErrorAction Stop
+            if ($publicSettings.initialized) {
+                Dim '  Seerr already initialised — skipping bootstrap.'
+                # Login so the caller can still chain server config if needed.
+                $session = $null
+                try {
+                    $loginBody = @{
+                        username = $EnvMap['JELLYFIN_ADMIN_USERNAME']
+                        password = $EnvMap['JELLYFIN_ADMIN_PASSWORD']
+                    } | ConvertTo-Json
+                    Invoke-WebRequest -Uri "$seerrBase/api/v1/auth/jellyfin" -Method POST `
+                        -ContentType 'application/json' -Body $loginBody `
+                        -SessionVariable session -UseBasicParsing -ErrorAction Stop | Out-Null
+                    return $session
+                } catch {
+                    return $null
+                }
+            }
+        }
+    } catch { }
+
+    try {
+        $body = @{
+            username   = $EnvMap['JELLYFIN_ADMIN_USERNAME']
+            password   = $EnvMap['JELLYFIN_ADMIN_PASSWORD']
+            hostname   = 'jellyfin'
+            port       = 8096
+            useSsl     = $false
+            urlBase    = ''
+            # MediaServerType.JELLYFIN = 2 in Seerr's enum. Without this,
+            # auth.ts throws ApiErrorCode.NoAdminUser even when the Jellyfin
+            # account IS an admin — Seerr only auto-creates the first Seerr
+            # admin when serverType is explicitly Jellyfin or Emby.
+            serverType = 2
+        } | ConvertTo-Json
+        $session = $null
+        $resp = Invoke-WebRequest -Uri "$seerrBase/api/v1/auth/jellyfin" -Method POST `
+            -ContentType 'application/json' -Body $body `
+            -SessionVariable session -UseBasicParsing -ErrorAction Stop
+        if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+            Ok "Seerr admin user '$($EnvMap['JELLYFIN_ADMIN_USERNAME'])' created (via Jellyfin auth)."
+            # Flip the "initialized" flag in settings.json so the next visit
+            # lands on /login instead of /setup. Seerr writes mediaServerType
+            # but leaves main.initialized = false on bootstrap; we have to set
+            # it (and public.initialized for the front-end mirror) ourselves.
+            $seerrSettings = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/seerr/settings.json'
+            if (Test-Path $seerrSettings) {
+                try {
+                    $json = Get-Content $seerrSettings -Raw | ConvertFrom-Json
+                    $changed = $false
+                    if ($json.main -and -not $json.main.initialized)       { $json.main.initialized = $true; $changed = $true }
+                    if ($json.public -and -not $json.public.initialized)   { $json.public.initialized = $true; $changed = $true }
+                    if ($changed) {
+                        $json | ConvertTo-Json -Depth 20 | Set-Content $seerrSettings -Encoding UTF8
+                        & docker restart seerr | Out-Null
+                        Ok 'Seerr setup wizard marked complete (visiting / now lands on /login).'
+                    }
+                } catch {
+                    Dim "  Could not flip Seerr initialized flag: $($_.Exception.Message)"
+                }
+            }
+            return $session
+        }
+    } catch {
+        $msg = $_.Exception.Message
+        $body = ''
+        if ($_.ErrorDetails) { $body = $_.ErrorDetails.Message }
+        Err "  Seerr bootstrap failed: $msg"
+        if ($body) { Dim "    $body" }
+    }
+    return $null
+}
+
+# ---------------------------------------------------------------------------
+# Configure-SeerrServers: registers Sonarr + Radarr inside Seerr so that
+# requests forwarded from the UI go to the right *arr app with the HD-1080p
+# quality profile and the right root folder. Requires a session cookie
+# from Bootstrap-Seerr.
+# ---------------------------------------------------------------------------
+function Configure-SeerrServers {
+    param($EnvMap, $Session)
+    $seerrBase = 'http://localhost:5055'
+    $sonarrUrl   = 'http://localhost:8989'
+    $radarrUrl   = 'http://localhost:7878'
+    $sonarrKey   = [string]$EnvMap['SONARR_API_KEY']
+    $radarrKey   = [string]$EnvMap['RADARR_API_KEY']
+
+    function Get-1080pProfileIdLocal {
+        param([string]$BaseUrl, [string]$ApiKey)
+        $profiles = Invoke-RestMethod -Uri "$BaseUrl/api/v3/qualityprofile" -Headers @{ 'X-Api-Key' = $ApiKey } -ErrorAction Stop
+        ($profiles | Where-Object { $_.name -eq 'HD-1080p' } | Select-Object -First 1).id
+    }
+
+    $sonarrProfile = Get-1080pProfileIdLocal -BaseUrl $sonarrUrl -ApiKey $sonarrKey
+    $radarrProfile = Get-1080pProfileIdLocal -BaseUrl $radarrUrl -ApiKey $radarrKey
+
+    foreach ($svc in @(
+        @{ Endpoint='sonarr'; Name='Sonarr'; Host='sonarr'; Port=8989; Key=$sonarrKey; Profile=$sonarrProfile; Dir='/tv/' }
+        @{ Endpoint='radarr'; Name='Radarr'; Host='radarr'; Port=7878; Key=$radarrKey; Profile=$radarrProfile; Dir='/movies/' }
+    )) {
+        try {
+            $existing = Invoke-RestMethod -Uri "$seerrBase/api/v1/settings/$($svc.Endpoint)" `
+                -WebSession $Session -ErrorAction Stop
+            if ($existing -and $existing.Count -gt 0) {
+                Dim "  Seerr: $($svc.Name) server already configured."
+                continue
+            }
+        } catch { }
+
+        $body = @{
+            name              = $svc.Name
+            hostname          = $svc.Host
+            port              = $svc.Port
+            apiKey            = $svc.Key
+            useSsl            = $false
+            baseUrl           = ''
+            activeProfileId   = [int]$svc.Profile
+            activeProfileName = 'HD-1080p'
+            activeDirectory   = $svc.Dir
+            is4k              = $false
+            isDefault         = $true
+            tags              = @()
+            externalUrl       = ''
+            syncEnabled       = $false
+            preventSearch     = $false
+        }
+        if ($svc.Endpoint -eq 'sonarr') {
+            $body.activeAnimeProfileId         = [int]$svc.Profile
+            $body.activeAnimeDirectory         = $svc.Dir
+            $body.activeLanguageProfileId      = 1
+            $body.activeAnimeLanguageProfileId = 1
+            $body.enableSeasonFolders          = $true
+        } elseif ($svc.Endpoint -eq 'radarr') {
+            $body.minimumAvailability = 'released'
+        }
+
+        try {
+            Invoke-WebRequest -Uri "$seerrBase/api/v1/settings/$($svc.Endpoint)" -Method POST `
+                -WebSession $Session -ContentType 'application/json' `
+                -Body ($body | ConvertTo-Json -Compress) -UseBasicParsing -ErrorAction Stop | Out-Null
+            Ok "Seerr: $($svc.Name) registered (HD-1080p, root=$($svc.Dir))."
+        } catch {
+            $bodyErr = ''
+            if ($_.ErrorDetails) { $bodyErr = $_.ErrorDetails.Message }
+            Err "  Seerr: $($svc.Name) registration failed: $($_.Exception.Message)"
+            if ($bodyErr) { Dim "    $bodyErr" }
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Pre-Seed-MediaStack: writes config.xml for sonarr/radarr/prowlarr and
+# qBittorrent.conf for qbittorrent BEFORE their containers start, so each
+# app boots with our pre-generated API key + no first-run wizard.
+#
+# - *arr config.xml uses AuthenticationMethod=External so the WebUI loads
+#   without a password prompt (the API also accepts X-Api-Key regardless).
+# - qBittorrent gets admin/adminadmin as a known PBKDF2 hash + a subnet
+#   whitelist that lets containers on the caddy network (172.16/12) and
+#   localhost bypass auth entirely, so the API configurator works.
+# - Skips writing a file if the user has already started the app (config
+#   exists with a different API key) — preserves their customisations.
+# ---------------------------------------------------------------------------
+function Pre-Seed-MediaStack {
+    param($EnvMap)
+
+    # Ensure the media bind-mount targets exist on the host BEFORE docker
+    # compose up. If they don't, Docker auto-creates them as root-owned
+    # mounts inside the container, and Sonarr/Radarr (running as UID 1000
+    # 'abc' in the LSIO image) can't write into them — root folder add
+    # fails with FolderWritableValidator.
+    # Also pre-create the seerr config bind-mount target. Seerr runs as
+    # PUID 1000 and crashes on first start with EACCES when /app/config is
+    # owned by root (which it is when Docker auto-creates the host path).
+    $seerrDir = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/seerr'
+    if (-not (Test-Path $seerrDir)) {
+        New-Item -ItemType Directory -Path $seerrDir -Force | Out-Null
+        Dim "  Created Seerr config host directory: $seerrDir"
+    }
+    foreach ($k in @('MOVIES_PATH','TV_SHOWS_PATH','DOWNLOADS_PATH')) {
+        $p = [string]$EnvMap[$k]
+        if ([string]::IsNullOrWhiteSpace($p)) { continue }
+        # Skip obviously-foreign paths (Mac path on Windows, Win path on Mac)
+        # — these are a stale-.env signal and creating them would just leave
+        # surprise empty folders on the wrong filesystem.
+        if ($script:OS -eq 'Windows' -and $p -match '^/Users/') { continue }
+        if ($script:OS -ne 'Windows' -and $p -match '^[A-Za-z]:[\\/]')   { continue }
+        try {
+            if (-not (Test-Path $p)) {
+                New-Item -ItemType Directory -Path $p -Force | Out-Null
+                Dim "  Created $k host directory: $p"
+            }
+        } catch {
+            Dim "  Could not create $k at $p ($($_.Exception.Message)) — Sonarr/Radarr may need manual root-folder setup."
+        }
+    }
+
+    $apps = @(
+        @{ Name='Sonarr';   Dir='sonarr';   Port=8989; ApiKey=$EnvMap['SONARR_API_KEY'] }
+        @{ Name='Radarr';   Dir='radarr';   Port=7878; ApiKey=$EnvMap['RADARR_API_KEY'] }
+        @{ Name='Prowlarr'; Dir='prowlarr'; Port=9696; ApiKey=$EnvMap['PROWLARR_API_KEY'] }
+    )
+    foreach ($a in $apps) {
+        $cfgDir  = Join-Path $ProjectRoot ("persistent-storage/do-not-delete/" + $a.Dir)
+        $cfgFile = Join-Path $cfgDir 'config.xml'
+        if (-not (Test-Path $cfgDir)) {
+            New-Item -ItemType Directory -Path $cfgDir -Force | Out-Null
+        }
+        # Skip if user has already booted the app and customised the API key.
+        if (Test-Path $cfgFile -PathType Leaf) {
+            $existing = Get-Content $cfgFile -Raw -ErrorAction SilentlyContinue
+            if ($existing -and $existing -match '<ApiKey>([0-9a-fA-F]{16,})</ApiKey>') {
+                $existingKey = $Matches[1]
+                if ($existingKey -ne $a.ApiKey -and $existingKey -ne '__GENERATE_32_BYTE_HEX__') {
+                    # Preserve user's existing key — copy it back into .env so
+                    # the configurator can talk to the app.
+                    $EnvMap[("$($a.Name.ToUpper())_API_KEY")] = $existingKey
+                    Dim "  $($a.Name): keeping existing API key from config.xml."
+                    continue
+                }
+            }
+        }
+        $xml = @"
+<Config>
+  <BindAddress>*</BindAddress>
+  <Port>$($a.Port)</Port>
+  <SslPort>0</SslPort>
+  <EnableSsl>False</EnableSsl>
+  <LaunchBrowser>False</LaunchBrowser>
+  <ApiKey>$($a.ApiKey)</ApiKey>
+  <AuthenticationMethod>External</AuthenticationMethod>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
+  <Branch>main</Branch>
+  <LogLevel>info</LogLevel>
+  <UrlBase></UrlBase>
+  <InstanceName>$($a.Name)</InstanceName>
+  <UpdateMechanism>Docker</UpdateMechanism>
+</Config>
+"@
+        Set-Content -Path $cfgFile -Value $xml -Encoding UTF8
+        Ok "$($a.Name) pre-seeded (config.xml with known API key)."
+    }
+
+    # qBittorrent: minimal pre-seed.
+    #   - AuthSubnetWhitelist for the docker bridge + RFC1918 ranges so the
+    #     API configurator (and Caddy) reach /api/v2 without creds.
+    #   - HostHeaderValidation + CSRF off so qb.localhost / qb.${DOMAIN}
+    #     proxied requests aren't rejected as cross-origin.
+    #   - /downloads as default save path.
+    # DO NOT pre-seed Password_PBKDF2: qBittorrent v5.x rejects the legacy
+    # hash format and enters a crash loop. Instead the configurator
+    # (Set-QbittorrentPassword) POSTs the desired password via the WebUI
+    # API on first boot, which lets qBittorrent compute the v5 hash itself.
+    $qbConfDir  = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/qbittorrent/qBittorrent'
+    $qbConfFile = Join-Path $qbConfDir 'qBittorrent.conf'
+    if (-not (Test-Path $qbConfDir)) {
+        New-Item -ItemType Directory -Path $qbConfDir -Force | Out-Null
+    }
+    # NOTE: line endings MUST be Unix LF. The linuxserver image's qbittorrent
+    # run script greps WebUI\Address with `grep -Po "...\K(.*)"`; on a CRLF
+    # file the trailing \r ends up in the captured value, the
+    # `[[ ${addr} == "*" ]]` check fails, and nc -z "*\r" 8080 throws
+    # `getaddrinfo: Name does not resolve`. qBittorrent then crash-loops.
+    # We write LF via [IO.File]::WriteAllText (PowerShell's Set-Content
+    # defaults to CRLF on Windows); qBittorrent itself writes LF when it
+    # rewrites the file later (Qt on Linux). Also self-heal an existing
+    # CRLF conf on every wizard run so an upgrade from a buggy pre-seed
+    # doesn't leave the user stuck.
+    function Convert-FileToLF {
+        param([string]$Path)
+        if (-not (Test-Path $Path -PathType Leaf)) { return }
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        if ($bytes -notcontains [byte]13) { return }
+        $fixed = [byte[]]($bytes | Where-Object { $_ -ne 13 })
+        [System.IO.File]::WriteAllBytes($Path, $fixed)
+        Dim "  Stripped CRLF from $Path"
+    }
+
+    if (-not (Test-Path $qbConfFile -PathType Leaf)) {
+        $qbConf = @"
+[BitTorrent]
+Session\DefaultSavePath=/downloads/
+
+[LegalNotice]
+Accepted=true
+
+[Preferences]
+WebUI\Port=8080
+WebUI\AuthSubnetWhitelistEnabled=true
+WebUI\AuthSubnetWhitelist=172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16, 127.0.0.0/8
+WebUI\HostHeaderValidation=false
+WebUI\CSRFProtection=false
+WebUI\LocalHostAuth=false
+Downloads\SavePath=/downloads/
+"@
+        $qbConf = $qbConf -replace "`r`n", "`n"
+        [System.IO.File]::WriteAllText($qbConfFile, $qbConf, [System.Text.UTF8Encoding]::new($false))
+        Ok 'qBittorrent pre-seeded (LF endings, LAN auth bypass, /downloads).'
+    } else {
+        Convert-FileToLF -Path $qbConfFile
+        Dim '  qBittorrent: config exists, keeping user customisations.'
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Ensure-HeimdallTiles: rewrites Heimdall's start-page tile URLs in
 # app.sqlite based on the tile domain captured in Step 2b of the wizard.
 #
@@ -1251,6 +2145,11 @@ function Ensure-EnvSecrets {
         @{ Key='DB_PASSWORD';                    Bytes=20; Mode='hex' }
         @{ Key='TOR_VNC_PW';                     Bytes=12; Mode='hex' }
         @{ Key='HERMES_WORKSPACE_PASSWORD';      Bytes=12; Mode='hex' }
+        @{ Key='SONARR_API_KEY';                 Bytes=16; Mode='hex' }
+        @{ Key='RADARR_API_KEY';                 Bytes=16; Mode='hex' }
+        @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
+        @{ Key='SEERR_API_KEY';                  Bytes=16; Mode='hex' }
+        @{ Key='JELLYFIN_ADMIN_PASSWORD';        Bytes=12; Mode='hex' }
     )
     $changed = $false
     foreach ($s in $genSpecs) {
@@ -1711,6 +2610,13 @@ function Show-Summary {
         G '    Filebrowser             http://file.localhost'
         G '    Omni Tools              http://tool.localhost'
         G '    Tor Browser (auto-login) http://tor.localhost/'
+        G ''
+        Dim '  REQUEST / DOWNLOAD STACK'
+        G '    Seerr (request UI)      http://request.localhost'
+        G '    Sonarr (TV)             http://sonarr.localhost'
+        G '    Radarr (movies)         http://radarr.localhost'
+        G '    Prowlarr (indexers)     http://prowlarr.localhost'
+        G '    qBittorrent             http://qb.localhost   (admin / adminadmin)'
     }
     if ($Result.HasAi) {
         G ''
@@ -1769,6 +2675,11 @@ function Show-Summary {
             Dim "    file.$d        ->  HTTP  caddy:80   Filebrowser"
             Dim "    tor.$d         ->  HTTP  caddy:80   Tor Browser (SSO)"
             Dim "    tool.$d        ->  HTTP  caddy:80   Omni Tools"
+            Dim "    request.$d     ->  HTTP  caddy:80   Seerr (requests)"
+            Dim "    sonarr.$d      ->  HTTP  caddy:80   Sonarr (TV)"
+            Dim "    radarr.$d      ->  HTTP  caddy:80   Radarr (movies)"
+            Dim "    prowlarr.$d    ->  HTTP  caddy:80   Prowlarr (indexers)"
+            Dim "    qb.$d          ->  HTTP  caddy:80   qBittorrent"
         }
         if ($Result.HasAi) {
             Dim "    chat.$d        ->  HTTP  caddy:80   Open WebUI"
@@ -1898,6 +2809,11 @@ if ($StartOnly) {
     #     no-ops once the placeholders are gone, so this is safe in -StartOnly.
     Ensure-HeimdallTiles -TileDomain $envMap['HEIMDALL_TILE_DOMAIN']
 
+    # 5c. Pre-seed media-stack config files (sonarr/radarr/prowlarr config.xml
+    #     + qBittorrent.conf) so each app boots with our known API key and
+    #     skips its first-run wizard. Idempotent.
+    Pre-Seed-MediaStack -EnvMap $envMap
+
     # 6. Generate Authelia admin argon2 hash if users_database.yml still has
     #    the placeholder. Auto-pulls the authelia image on first run.
     Ensure-AutheliaUser -EnvMap $envMap
@@ -1912,7 +2828,7 @@ if ($StartOnly) {
     $gpuMode   = [string]$stateBlob.gpuMode
     if ($customSvc -and $customSvc.Count -gt 0) {
         $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-workspace','n8n' }).Count -gt 0
-        $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser' }).Count -gt 0
+        $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent' }).Count -gt 0
     } else {
         $hasAi    = $profiles -contains 'ai'
         $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity')
@@ -1928,6 +2844,9 @@ if ($StartOnly) {
     if ($hasAi -and (Get-OllamaModelCount) -eq 0) {
         Install-FirstLlm
     }
+
+    # 9. Once containers are up, wire the *arr stack via REST APIs.
+    if ($hasMedia) { Configure-MediaStack -EnvMap $envMap }
 
     Show-Summary -Result ([pscustomobject]@{
         Env       = $envMap
@@ -1972,6 +2891,7 @@ $stateBlob.configured     = $true
 Repair-BindPaths
 Render-Templates -Env $result.Env -StateBlob $stateBlob
 Ensure-HeimdallTiles -TileDomain $result.Env['HEIMDALL_TILE_DOMAIN']
+Pre-Seed-MediaStack -EnvMap $result.Env
 Ensure-AutheliaUser -EnvMap $result.Env
 Write-State -State $stateBlob
 
@@ -1989,6 +2909,10 @@ if (-not $NoStart -and $result.HasAi) {
     if ((Get-OllamaModelCount) -eq 0) {
         Install-FirstLlm
     }
+}
+
+if (-not $NoStart -and $result.HasMedia) {
+    Configure-MediaStack -EnvMap $result.Env
 }
 
 Show-Summary -Result $result

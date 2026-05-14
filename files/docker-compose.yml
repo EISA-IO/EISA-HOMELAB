@@ -99,7 +99,12 @@ services:
   jellyfin:
     env_file:
       - .env
-    image: jellyfin/jellyfin:latest
+    # Pinned to 10.10.7 because Jellyfin 10.11's StartupController.UpdateStartupUser
+    # throws "Sequence contains no elements" — the wizard's API-driven admin-user
+    # creation path was broken in 10.11 and the upstream issue (jellyfin#14576)
+    # was closed as not-planned. 10.10.7 is the last release where Bootstrap-Jellyfin
+    # (which lets Seerr's first-admin step run unattended) works reliably.
+    image: jellyfin/jellyfin:10.10.7
     container_name: jellyfin
     ports:
       - 9014:8096
@@ -579,6 +584,142 @@ services:
     networks:
       - caddy
     profiles: [ai]
+
+  # ========================
+  # REQUEST + DOWNLOAD STACK ("*arr") - Seerr asks, *arr resolves.
+  #
+  # Flow: user requests a movie/show in Seerr -> Seerr posts the request
+  # to Sonarr (TV) or Radarr (movies) -> *arr searches Prowlarr's indexers
+  # for a 1080p release -> hands the magnet/torrent to qBittorrent ->
+  # qBittorrent downloads to DOWNLOADS_PATH -> *arr imports the finished
+  # file into TV_SHOWS_PATH / MOVIES_PATH -> Jellyfin picks it up.
+  #
+  # All five services use linuxserver.io images (well-maintained, common
+  # PUID/PGID + TZ env vars). Pre-seeded config files written by setup.ps1
+  # before first boot give each app a known API key so the configurator
+  # can wire them together without prompts.
+  # ========================
+
+  # qBittorrent - the actual torrent client. WEBUI_PORT stays 8080 inside
+  # the container; published as 9081 on the host to avoid colliding with
+  # Heimdall (8080). Default login is admin/adminadmin via pre-seeded
+  # qBittorrent.conf; subnet whitelist lets containers on the caddy
+  # network and 127.0.0.1 bypass auth entirely so the API configurator
+  # doesn't need creds.
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Asia/Riyadh}
+      - WEBUI_PORT=8080
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/qbittorrent:/config
+      - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
+    ports:
+      - 9081:8080
+      # BitTorrent listen port (TCP+UDP) - opening these on your router
+      # gives better swarm connectivity but is optional.
+      - 6881:6881
+      - 6881:6881/udp
+    restart: always
+    networks:
+      - caddy
+    profiles: [media, media-stream]
+
+  # Prowlarr - central indexer manager. Adds an indexer ONCE here, syncs
+  # it to Sonarr + Radarr automatically. Pre-seeded with public/no-signup
+  # indexers (1337x, YTS, EZTV, TheRARBG, ThePirateBay) by the wizard.
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Asia/Riyadh}
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/prowlarr:/config
+    ports:
+      - 9696:9696
+    restart: always
+    networks:
+      - caddy
+    profiles: [media, media-stream]
+
+  # Sonarr - TV show automation. Watches Prowlarr indexers for releases
+  # matching its monitored shows, hands magnet links to qBittorrent,
+  # imports finished episodes into TV_SHOWS_PATH at 1080p.
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Asia/Riyadh}
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/sonarr:/config
+      - ${TV_SHOWS_PATH:-F:/TV-Shows}:/tv
+      - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
+    ports:
+      - 8989:8989
+    restart: always
+    depends_on:
+      - qbittorrent
+      - prowlarr
+    networks:
+      - caddy
+    profiles: [media, media-stream]
+
+  # Radarr - movie automation. Same role as Sonarr but for films.
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Asia/Riyadh}
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/radarr:/config
+      - ${MOVIES_PATH:-F:/Movies}:/movies
+      - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
+    ports:
+      - 7878:7878
+    restart: always
+    depends_on:
+      - qbittorrent
+      - prowlarr
+    networks:
+      - caddy
+    profiles: [media, media-stream]
+
+  # Seerr - the user-facing request UI. Talks to Jellyfin (already in
+  # the stack) for library state, Sonarr + Radarr for new requests.
+  # settings.json is pre-written so Seerr's first-run wizard is skipped.
+  seerr:
+    image: seerr/seerr:latest
+    container_name: seerr
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Asia/Riyadh}
+      - LOG_LEVEL=info
+    volumes:
+      - ${PERSISTENT_STORAGE}/do-not-delete/seerr:/app/config
+    ports:
+      - 5055:5055
+    restart: always
+    depends_on:
+      - sonarr
+      - radarr
+    networks:
+      - caddy
+    profiles: [media, media-stream]
 
 volumes:
   ollama:

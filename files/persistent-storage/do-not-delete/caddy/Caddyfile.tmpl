@@ -178,6 +178,37 @@ http://photos.${DOMAIN} {
 }
 
 # =============================================================================
+# REQUEST / DOWNLOAD STACK
+# =============================================================================
+
+http://request.${DOMAIN} {
+	import forward_auth
+	reverse_proxy seerr:5055
+}
+
+http://sonarr.${DOMAIN} {
+	import forward_auth
+	reverse_proxy sonarr:8989
+}
+
+http://radarr.${DOMAIN} {
+	import forward_auth
+	reverse_proxy radarr:7878
+}
+
+http://prowlarr.${DOMAIN} {
+	import forward_auth
+	reverse_proxy prowlarr:9696
+}
+
+http://qb.${DOMAIN} {
+	import forward_auth
+	reverse_proxy qbittorrent:8080 {
+		header_up Host {upstream_hostport}
+	}
+}
+
+# =============================================================================
 # STASH
 # =============================================================================
 

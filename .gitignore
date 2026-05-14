@@ -39,6 +39,12 @@ files/persistent-storage/do-not-delete/heimdall/
 files/persistent-storage/do-not-delete/filebrowser/filebrowser.db
 files/persistent-storage/do-not-delete/filebrowser/storage/
 files/persistent-storage/do-not-delete/tor/
+# *arr stack — runtime DBs, logs, sqlite, generated XML configs all live here.
+files/persistent-storage/do-not-delete/sonarr/
+files/persistent-storage/do-not-delete/radarr/
+files/persistent-storage/do-not-delete/prowlarr/
+files/persistent-storage/do-not-delete/qbittorrent/
+files/persistent-storage/do-not-delete/seerr/
 
 # SearXNG state files we don't want to ship.
 files/persistent-storage/do-not-delete/searxng/*.new

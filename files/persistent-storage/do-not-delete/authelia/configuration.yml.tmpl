@@ -136,6 +136,30 @@ access_control:
         - group:admins
 
 ###############################################################
+#                  REQUEST / DOWNLOAD STACK                   #
+###############################################################
+    - domain: request.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
+    - domain: sonarr.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
+    - domain: radarr.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
+    - domain: prowlarr.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
+    - domain: qb.${DOMAIN}
+      policy: one_factor
+      subject:
+        - group:admins
+
+###############################################################
 #                          STASH                              #
 ###############################################################
     - domain: cookies.${DOMAIN}
