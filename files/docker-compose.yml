@@ -546,7 +546,14 @@ services:
   # HERMES WORKSPACE - web UI for orchestrating hermes-agent
   # (outsourc-e/hermes-workspace) Chat, memory browser, skill manager,
   # terminal, multi-agent swarm view. Talks to hermes-agent via the docker
-  # network. Fail-closes without HERMES_WORKSPACE_PASSWORD on non-loopback.
+  # network.
+  #
+  # Auth: HERMES_PASSWORD is intentionally unset, and HERMES_ALLOW_INSECURE_REMOTE=1
+  # bypasses upstream's fail-closed bind guard so the workspace starts on
+  # 0.0.0.0:3000 without showing a login form. LAN trust is assumed —
+  # in tunnel mode this service sits behind Caddy + Authelia, which is
+  # the actual auth gate. Don't expose port 3030 to the public internet
+  # directly without putting an auth proxy in front.
   # ========================
   hermes-workspace:
     image: ghcr.io/outsourc-e/hermes-workspace:latest
@@ -556,7 +563,9 @@ services:
       HERMES_API_URL: 'http://hermes-agent:8642'
       HERMES_DASHBOARD_URL: 'http://hermes-dashboard:9119'
       HERMES_API_TOKEN: ${HERMES_API_KEY}
-      HERMES_PASSWORD: ${HERMES_WORKSPACE_PASSWORD}
+      # Bypass the upstream fail-closed guard. Workspace starts on 0.0.0.0
+      # with no login form. Auth is delegated to Caddy/Authelia in tunnel mode.
+      HERMES_ALLOW_INSECURE_REMOTE: '1'
       # Plain HTTP over LAN: don't insist on Secure cookies.
       COOKIE_SECURE: '0'
       # We sit behind Caddy in tunnel mode.
