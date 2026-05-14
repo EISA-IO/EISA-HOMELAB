@@ -34,6 +34,7 @@ files/persistent-storage/jellyfin/
 files/persistent-storage/navidrome/
 files/persistent-storage/portainer/
 files/persistent-storage/n8n/
+files/persistent-storage/immich/
 files/persistent-storage/do-not-delete/heimdall/
 files/persistent-storage/do-not-delete/filebrowser/filebrowser.db
 files/persistent-storage/do-not-delete/filebrowser/storage/

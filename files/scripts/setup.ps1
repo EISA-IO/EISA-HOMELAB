@@ -673,6 +673,34 @@ function Invoke-Wizard {
     }
     Ok ("Access: " + ($(if ($useTunnel) { "ONLINE ($($envMap['DOMAIN']))" } else { 'LOCAL only' })))
 
+    # ---- Step 2b: Heimdall start-page tile URLs --------------------------
+    # Heimdall ships a curated set of dashboard tiles whose URLs all point at
+    # the maintainer's domain. We give the user one chance, here, to put
+    # their own domain in — or leave blank for localhost-only mode.
+    # The actual SQL rewrite runs later in Ensure-HeimdallTiles and is
+    # idempotent: it only fires while the placeholder URLs are still in the
+    # DB, so re-runs and user customizations are safe.
+    Step 'Step 2b — Heimdall start-page tiles' 'Tell us where the dashboard tiles should point. We rewrite them only once, the first time we see the placeholder URLs.'
+    G  '  Type the domain you want your dashboard tiles to use, or leave blank'
+    G  '  for local-only mode. In local mode tiles use http://<sub>.localhost'
+    G  '  URLs which auto-resolve to 127.0.0.1 in every modern browser — Caddy'
+    G  '  proxies them to the right container on port 80.'
+    G  ''
+    Dim '    With "example.com":  https://chat.example.com, https://movie.example.com, ...'
+    Dim '    Blank (local-only):  http://chat.localhost, http://photos.localhost, http://movie.localhost ...'
+    G  ''
+    $tileDefault = if (-not (Test-Placeholder $envMap['HEIMDALL_TILE_DOMAIN'])) {
+        $envMap['HEIMDALL_TILE_DOMAIN']
+    } elseif ($envMap['DOMAIN']) {
+        $envMap['DOMAIN']
+    } else { '' }
+    $envMap['HEIMDALL_TILE_DOMAIN'] = Ask 'Domain for Heimdall tiles (blank = *.localhost)' $tileDefault -AllowEmpty
+    if ($envMap['HEIMDALL_TILE_DOMAIN']) {
+        Ok ("Heimdall tiles  ->  https://*." + $envMap['HEIMDALL_TILE_DOMAIN'])
+    } else {
+        Ok 'Heimdall tiles  ->  http://*.localhost (local-only, via Caddy)'
+    }
+
     # ---- Step 3: persistent storage --------------------------------------
     if (Test-Placeholder $envMap['PERSISTENT_STORAGE']) {
         $envMap['PERSISTENT_STORAGE'] = './persistent-storage'
@@ -851,17 +879,47 @@ function Write-LocalOnlyCaddyfile {
     $torAuth = [string]$Env['TOR_BASIC_AUTH']
     $content = @"
 # Caddy reverse proxy — LOCAL-ONLY MODE
-# (DOMAIN was left empty in .env, so no public *.${DOMAIN} hosts are rendered.)
+# DOMAIN is empty in .env, so instead of *.<your-domain> we serve every
+# service at http://<sub>.localhost. *.localhost auto-resolves to 127.0.0.1
+# in all modern browsers + OSes (RFC 6761), so no hosts file, no DNS, no
+# Cloudflare needed — just open http://photos.localhost, http://chat.localhost,
+# etc., and Caddy on :80 proxies to the right container.
 #
-# Direct service URLs still work — see the summary at the end of the launcher
-# for the full list. Special: http://tor.localhost/ is zero-click into the
-# Tor browser (no kasm login prompt).
+# LAN-only trust assumed — no Authelia gate on these routes. Switch to
+# tunnel mode in the wizard (Step 2) if you want SSO + public access.
 
 {
     auto_https off
     http_port 80
 }
 
+# ===== INFRASTRUCTURE =====
+http://hub.localhost {
+    reverse_proxy heimdall-media:80
+}
+
+http://portainer.localhost {
+    reverse_proxy Portainer:9000
+}
+
+http://qdrant.localhost {
+    reverse_proxy qdrant:6333
+}
+
+http://auth.localhost {
+    reverse_proxy Authelia:9091
+}
+
+# ===== TOOLS =====
+http://tool.localhost {
+    reverse_proxy host.docker.internal:8890
+}
+
+http://search.localhost {
+    reverse_proxy searxng:8080
+}
+
+# Tor zero-click auto-login (basic-auth injected, kasm form skipped).
 http://tor.localhost {
     @root path /
     redir @root /vnc.html?username=kasm_user&password=$torPw&autoconnect=true&resize=remote 302
@@ -873,8 +931,65 @@ http://tor.localhost {
     }
 }
 
+# ===== AI =====
+http://chat.localhost {
+    reverse_proxy host.docker.internal:9002
+}
+
+http://hermes.localhost {
+    reverse_proxy hermes-workspace:3000
+}
+
+http://n8n.localhost {
+    reverse_proxy host.docker.internal:5678
+}
+
+http://vane.localhost {
+    reverse_proxy vane:3000
+}
+
+http://research.localhost {
+    reverse_proxy local-deep-research:5000
+}
+
+# AI host services (no docker container in the standard compose — these
+# routes 502 until you run flux/pony/voice/ltx natively on the host).
+http://flux.localhost {
+    reverse_proxy host.docker.internal:9020
+}
+
+http://pony.localhost {
+    reverse_proxy host.docker.internal:9021
+}
+
+http://voice.localhost {
+    reverse_proxy host.docker.internal:7861
+}
+
+http://ltx.localhost {
+    reverse_proxy host.docker.internal:9022
+}
+
+# ===== MEDIA =====
+http://movie.localhost {
+    reverse_proxy host.docker.internal:9014
+}
+
+http://music.localhost {
+    reverse_proxy host.docker.internal:4533
+}
+
+http://file.localhost {
+    reverse_proxy host.docker.internal:8095
+}
+
+http://photos.localhost {
+    reverse_proxy immich-server:2283
+}
+
+# Catch-all: any *.localhost we didn't map gets a friendly hint.
 :80 {
-    respond "EISA Homelab - local-only mode. Open http://tor.localhost/ for the Tor browser; see the launcher output for other services." 200
+    respond "Homelab - local-only mode. Open http://hub.localhost/ for the dashboard." 200
 }
 "@
     Set-Content -Path $OutputPath -Value $content -Encoding UTF8
@@ -1030,6 +1145,92 @@ function Ensure-AutheliaUser {
 
     Ok "Authelia admin user 'admin' configured."
     Dim "  Password: $password   (also saved in .env as AUTHELIA_ADMIN_PASSWORD)"
+}
+
+# ---------------------------------------------------------------------------
+# Ensure-HeimdallTiles: rewrites Heimdall's start-page tile URLs in
+# app.sqlite based on the tile domain captured in Step 2b of the wizard.
+#
+#   $TileDomain non-empty  ->  https://chat.<dom>, https://movie.<dom>, ...
+#   $TileDomain empty      ->  http://chat.localhost, http://photos.localhost, ...
+#                              (resolved by Caddy's local-mode vhosts on :80)
+#
+# The rewrite is idempotent and gated: it only fires while at least one
+# tile URL still contains the shipped "homelab.local" placeholder, so user
+# customizations are never clobbered, and re-runs are no-ops.
+#
+# Uses docker (alpine:3.20 + apk add sqlite) so we don't need sqlite3
+# on the host — same pattern Ensure-AutheliaUser uses for argon2.
+# ---------------------------------------------------------------------------
+function Ensure-HeimdallTiles {
+    param([string]$TileDomain = '')
+
+    $dbPath = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/heimdall/config/www/app.sqlite'
+    if (-not (Test-Path $dbPath -PathType Leaf)) {
+        Dim '  Heimdall DB not present yet — tile rewrite will run after first heimdall boot.'
+        return
+    }
+
+    $dbDir  = Split-Path $dbPath
+    $dbName = Split-Path $dbPath -Leaf
+    $tmpSql = Join-Path $dbDir '.heimdall-rewrite.sql'
+
+    # Probe: how many tiles still hold the maintainer's placeholder?
+    $probeRaw = (& docker run --rm -v "${dbDir}:/data" alpine:3.20 sh -c "apk add --no-cache sqlite >/dev/null 2>&1 && sqlite3 /data/$dbName ""SELECT COUNT(*) FROM items WHERE url LIKE '%homelab.local%';""") 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Err '  Could not probe Heimdall DB (docker sqlite3 failed). Skipping tile rewrite.'
+        Dim "  $probeRaw"
+        return
+    }
+    $count = 0
+    [int]::TryParse(($probeRaw.Trim() -split "`n" | Select-Object -Last 1).Trim(), [ref]$count) | Out-Null
+    if ($count -eq 0) {
+        Dim '  Heimdall tiles already customized — leaving them alone.'
+        return
+    }
+
+    # Build the per-tile URL map. id values come from the shipped app.sqlite
+    # seed; if a user wipes and re-adds tiles, ids will be different and the
+    # homelab.local probe above will return 0, so we never reach this branch.
+    $lines = @()
+    if ([string]::IsNullOrWhiteSpace($TileDomain)) {
+        # LOCAL MODE: route everything through Caddy's *.localhost vhosts
+        # (see Write-LocalOnlyCaddyfile). *.localhost auto-resolves to
+        # 127.0.0.1 in every modern OS/browser, so no DNS or hosts file
+        # required.
+        $sub = [ordered]@{
+            1 = 'chat'; 2 = 'movie'; 3 = 'music'; 4 = 'file'; 5 = 'tool'
+            6 = 'flux'; 7 = 'voice'; 8 = 'ltx'
+            9 = 'hermes'; 10 = 'n8n'; 11 = 'hermes'; 12 = 'n8n'
+        }
+        foreach ($id in $sub.Keys) {
+            $lines += "UPDATE items SET url='http://$($sub[$id]).localhost' WHERE id=$id;"
+        }
+    } else {
+        # ONLINE MODE: <subdomain>.<TileDomain> matching the Caddyfile vhosts.
+        $sub = [ordered]@{
+            1 = 'chat'; 2 = 'movie'; 3 = 'music'; 4 = 'file'; 5 = 'tool'
+            6 = 'flux'; 7 = 'voice'; 8 = 'ltx'
+            9 = 'hermes'; 10 = 'n8n'; 11 = 'hermes'; 12 = 'n8n'
+        }
+        foreach ($id in $sub.Keys) {
+            $lines += "UPDATE items SET url='https://$($sub[$id]).$TileDomain' WHERE id=$id;"
+        }
+    }
+
+    Set-Content -Path $tmpSql -Value ($lines -join "`n") -Encoding ASCII
+    try {
+        $applyRaw = (& docker run --rm -v "${dbDir}:/data" alpine:3.20 sh -c "apk add --no-cache sqlite >/dev/null 2>&1 && sqlite3 /data/$dbName "".read /data/.heimdall-rewrite.sql""") 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            $target = if ($TileDomain) { "https://*.$TileDomain" } else { 'http://*.localhost' }
+            Ok "Heimdall tiles rewritten -> $target ($count tile(s) updated)."
+        } else {
+            Err 'Heimdall tile rewrite failed (docker sqlite3 returned non-zero).'
+            Dim "  $applyRaw"
+        }
+    } finally {
+        Remove-Item $tmpSql -ErrorAction SilentlyContinue
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -1496,30 +1697,33 @@ function Show-Summary {
     }
     G ''
     G '  Open these in your browser:'
+    Dim '  (*.localhost auto-resolves to 127.0.0.1 in every modern browser —'
+    Dim '   Caddy on :80 proxies each subdomain to the right container.)'
     G ''
-    G '    Heimdall (start page)   http://localhost:8080'
-    G '    Portainer               http://localhost:9000'
+    G '    Heimdall (start page)   http://hub.localhost'
+    G '    Portainer               http://portainer.localhost'
     if ($Result.HasMedia) {
         G ''
         Dim '  MEDIA & PRODUCTIVITY'
-        G '    Jellyfin (movies/TV)    http://localhost:9014'
-        G '    Navidrome (music)       http://localhost:4533'
-        G '    Immich (photos/videos)  http://localhost:2283'
-        G '    Filebrowser             http://localhost:8095'
-        G '    Omni Tools              http://localhost:8890'
+        G '    Jellyfin (movies/TV)    http://movie.localhost'
+        G '    Navidrome (music)       http://music.localhost'
+        G '    Immich (photos/videos)  http://photos.localhost'
+        G '    Filebrowser             http://file.localhost'
+        G '    Omni Tools              http://tool.localhost'
         G '    Tor Browser (auto-login) http://tor.localhost/'
     }
     if ($Result.HasAi) {
         G ''
         Dim '  AI'
-        G '    Open WebUI (chat)       http://localhost:9002'
-        G '    Ollama API              http://localhost:11434'
-        G '    SearXNG (search)        http://localhost:8031'
-        G '    Local Deep Research     http://localhost:5005'
-        G '    Vane                    http://localhost:3000'
-        G '    Hermes Workspace        http://localhost:3030'
-        G '    Hermes Gateway (API)    http://localhost:8642'
-        G '    n8n (workflows)         http://localhost:5678'
+        G '    Open WebUI (chat)       http://chat.localhost'
+        G '    SearXNG (search)        http://search.localhost'
+        G '    Local Deep Research     http://research.localhost'
+        G '    Vane                    http://vane.localhost'
+        G '    Hermes Workspace        http://hermes.localhost'
+        G '    n8n (workflows)         http://n8n.localhost'
+        G '    Qdrant (vector DB)      http://qdrant.localhost'
+        Dim '    Ollama API (direct)     http://localhost:11434  (API-only, no UI)'
+        Dim '    Hermes Gateway (direct) http://localhost:8642   (API-only, no UI)'
     }
     if ($Result.UseTunnel -and $Result.Env['DOMAIN']) {
         $d = $Result.Env['DOMAIN']
@@ -1689,6 +1893,11 @@ if ($StartOnly) {
     Render-Templates -Env $envMap -StateBlob $stateBlob
     Ok 'Rendered Caddy / Authelia / SearXNG config from templates.'
 
+    # 5b. Rewrite Heimdall start-page tile URLs from the maintainer's
+    #     placeholders to whatever the user picked in Step 2b. Idempotent —
+    #     no-ops once the placeholders are gone, so this is safe in -StartOnly.
+    Ensure-HeimdallTiles -TileDomain $envMap['HEIMDALL_TILE_DOMAIN']
+
     # 6. Generate Authelia admin argon2 hash if users_database.yml still has
     #    the placeholder. Auto-pulls the authelia image on first run.
     Ensure-AutheliaUser -EnvMap $envMap
@@ -1762,6 +1971,7 @@ $stateBlob.configured     = $true
 
 Repair-BindPaths
 Render-Templates -Env $result.Env -StateBlob $stateBlob
+Ensure-HeimdallTiles -TileDomain $result.Env['HEIMDALL_TILE_DOMAIN']
 Ensure-AutheliaUser -EnvMap $result.Env
 Write-State -State $stateBlob
 
