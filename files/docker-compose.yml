@@ -6,7 +6,7 @@ services:
   # In local-only mode the wizard sets the token to a no-op value and you
   # can remove this block, or just ignore the container's restart loop.
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.5.0
     container_name: cloudflared
     restart: always
     env_file: .env
@@ -19,7 +19,7 @@ services:
   #######################  HEIMDALL  #######################
   heimdall:
     env_file: .env
-    image: lscr.io/linuxserver/heimdall:latest
+    image: lscr.io/linuxserver/heimdall:2.7.6
     container_name: heimdall-media
     environment:
       - PUID=1000
@@ -35,7 +35,7 @@ services:
 
   ##########  CADDY  ##########
   caddy:
-    image: caddy:latest
+    image: caddy:2.11.2
     container_name: Caddy
     restart: always
     cap_add:
@@ -58,7 +58,7 @@ services:
 
   ##########  AUTHELIA  ##########
   authelia:
-    image: authelia/authelia:latest
+    image: authelia/authelia:4.39.16
     container_name: Authelia
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/authelia:/config
@@ -80,7 +80,7 @@ services:
 
   ##########  NAVIDROME — Stream Music  ##########
   navidrome:
-    image: deluan/navidrome:latest
+    image: deluan/navidrome:0.60.3
     container_name: navidrome
     user: 1000:1000
     ports:
@@ -127,7 +127,7 @@ services:
   filebrowser:
     env_file:
       - .env
-    image: filebrowser/filebrowser:latest
+    image: filebrowser/filebrowser:v2.62.2
     container_name: filebrowser
     volumes:
       - ${MOVIES_PATH:-F:/Movies}:/srv/movies
@@ -156,7 +156,7 @@ services:
 
   #######################  OMNI-TOOLS  #######################
   omni-tools:
-    image: iib0011/omni-tools:latest
+    image: iib0011/omni-tools:0.6.0
     container_name: omni-tools
     restart: unless-stopped
     ports:
@@ -169,7 +169,7 @@ services:
   # N8N (Workflow automation platform)
   # ========================
   n8n-postgres:
-    image: postgres:16-alpine
+    image: postgres:16.13-alpine
     environment:
       - POSTGRES_USER
       - POSTGRES_PASSWORD
@@ -214,7 +214,7 @@ services:
     profiles: [ai]
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.1
     container_name: qdrant
     ports:
       - 6333:6333
@@ -278,7 +278,7 @@ services:
   searxng:
     env_file: .env
     container_name: searxng
-    image: docker.io/searxng/searxng:latest
+    image: docker.io/searxng/searxng:2026.5.13-8e5aa9d39
     restart: always
     ports:
       - "8031:8080"
@@ -293,7 +293,7 @@ services:
   # LOCAL DEEP RESEARCH — AI research assistant
   # ========================
   local-deep-research:
-    image: localdeepresearch/local-deep-research:latest
+    image: localdeepresearch/local-deep-research:1.6.10
     container_name: local-deep-research
     restart: unless-stopped
     ports:
@@ -340,7 +340,7 @@ services:
   # VANE — privacy-focused AI answering engine
   # ========================
   vane:
-    image: itzcrazykns1337/vane:slim-latest
+    image: itzcrazykns1337/vane:slim-v1.12.2
     container_name: vane
     environment:
       SEARXNG_API_URL: http://searxng:8080
@@ -358,7 +358,7 @@ services:
 
   ##########  PORTAINER  ##########
   portainer:
-    image: portainer/portainer-ce:latest
+    image: portainer/portainer-ce:2.41.1
     container_name: Portainer
     restart: always
     security_opt:
@@ -409,7 +409,7 @@ services:
   # automatically by setup.ps1 based on detected GPU.
   # ========================
   immich-server:
-    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v2.7.5}
     container_name: immich-server
     env_file: .env
     environment:
@@ -435,7 +435,7 @@ services:
     profiles: [media, media-stream]
 
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v2.7.5}
     container_name: immich-machine-learning
     env_file: .env
     volumes:
@@ -446,7 +446,7 @@ services:
     profiles: [media, media-stream]
 
   immich-redis:
-    image: docker.io/valkey/valkey:9
+    image: docker.io/valkey/valkey:9.0.4
     container_name: immich-redis
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping || exit 1"]
@@ -490,7 +490,7 @@ services:
   # `gateway run` and `dashboard ...` instead so the services are headless.
   # ========================
   hermes-agent:
-    image: nousresearch/hermes-agent:latest
+    image: nousresearch/hermes-agent:sha-9ed751b96706ffd343ae26531cd0e2152a1c7036
     container_name: hermes-agent
     env_file: .env
     command: ["gateway", "run"]
@@ -529,7 +529,7 @@ services:
   # has no built-in auth. Only hermes-workspace reaches it on the internal
   # docker network at http://hermes-dashboard:9119.
   hermes-dashboard:
-    image: nousresearch/hermes-agent:latest
+    image: nousresearch/hermes-agent:sha-9ed751b96706ffd343ae26531cd0e2152a1c7036
     container_name: hermes-dashboard
     env_file: .env
     command: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open", "--insecure"]
@@ -561,7 +561,9 @@ services:
   # directly without putting an auth proxy in front.
   # ========================
   hermes-workspace:
-    image: ghcr.io/outsourc-e/hermes-workspace:latest
+    # hermes-workspace doesn't publish semver tags on ghcr (only `main` + SHA
+    # digests). Pin by content-addressed digest so it can't silently roll forward.
+    image: ghcr.io/outsourc-e/hermes-workspace@sha256:2d2ba9aa5b1230766267322817e8e51113541780a5797802a582a47cc34a3df3
     container_name: hermes-workspace
     env_file: .env
     environment:
@@ -607,19 +609,23 @@ services:
   # network and 127.0.0.1 bypass auth entirely so the API configurator
   # doesn't need creds.
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
+    image: lscr.io/linuxserver/qbittorrent:5.2.0
     container_name: qbittorrent
     env_file: .env
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=${TZ:-Asia/Riyadh}
-      - WEBUI_PORT=8080
+      # qBittorrent v5 hard-rejects requests whose Host-header port doesn't
+      # match the listening port (no longer overridable via HostHeaderValidation).
+      # Listen + publish on the SAME port so qb.localhost / localhost:9081 /
+      # qbittorrent:9081 all carry a matching Host header.
+      - WEBUI_PORT=9081
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/qbittorrent:/config
       - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
     ports:
-      - 9081:8080
+      - 9081:9081
       # BitTorrent listen port (TCP+UDP) - opening these on your router
       # gives better swarm connectivity but is optional.
       - 6881:6881
@@ -633,7 +639,7 @@ services:
   # it to Sonarr + Radarr automatically. Pre-seeded with public/no-signup
   # indexers (1337x, YTS, EZTV, TheRARBG, ThePirateBay) by the wizard.
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    image: lscr.io/linuxserver/prowlarr:2.3.5
     container_name: prowlarr
     env_file: .env
     environment:
@@ -653,7 +659,7 @@ services:
   # matching its monitored shows, hands magnet links to qBittorrent,
   # imports finished episodes into TV_SHOWS_PATH at 1080p.
   sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
+    image: lscr.io/linuxserver/sonarr:4.0.17
     container_name: sonarr
     env_file: .env
     environment:
@@ -676,7 +682,7 @@ services:
 
   # Radarr - movie automation. Same role as Sonarr but for films.
   radarr:
-    image: lscr.io/linuxserver/radarr:latest
+    image: lscr.io/linuxserver/radarr:6.1.1
     container_name: radarr
     env_file: .env
     environment:
@@ -701,7 +707,9 @@ services:
   # the stack) for library state, Sonarr + Radarr for new requests.
   # settings.json is pre-written so Seerr's first-run wizard is skipped.
   seerr:
-    image: seerr/seerr:latest
+    # Seerr only publishes `develop`/`sha-*` tags (no semver) on Docker Hub.
+    # Pin to the SHA that corresponds to the last QA'd build.
+    image: seerr/seerr:sha-92c486d
     container_name: seerr
     env_file: .env
     environment:

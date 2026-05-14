@@ -203,7 +203,7 @@ http://prowlarr.${DOMAIN} {
 
 http://qb.${DOMAIN} {
 	import forward_auth
-	reverse_proxy qbittorrent:8080 {
+	reverse_proxy qbittorrent:9081 {
 		header_up Host {upstream_hostport}
 	}
 }

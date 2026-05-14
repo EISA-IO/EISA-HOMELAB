@@ -829,7 +829,7 @@ function Invoke-Wizard {
         @{ Key='RADARR_API_KEY';                 Bytes=16; Mode='hex' }
         @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
         @{ Key='SEERR_API_KEY';                  Bytes=16; Mode='hex' }
-        @{ Key='JELLYFIN_ADMIN_PASSWORD';        Bytes=12; Mode='hex' }
+        # JELLYFIN_ADMIN_PASSWORD intentionally omitted — see Default Credentials policy.
     )
     foreach ($s in $genSpecs) {
         if ($Reconfigure -or (Test-Placeholder $envMap[$s.Key])) {
@@ -1009,10 +1009,11 @@ http://prowlarr.localhost {
     reverse_proxy prowlarr:9696
 }
 
-# qBittorrent rejects Host headers it doesn't recognise; override so the
-# WebUI accepts the proxied request as if it came in on its own address.
+# qBittorrent v5 hard-validates the Host-header port against its listening
+# port, so we proxy on container port 9081 (matches host:9081 + WebUI\Port)
+# and rewrite the Host header to qbittorrent:9081 so it always matches.
 http://qb.localhost {
-    reverse_proxy qbittorrent:8080 {
+    reverse_proxy qbittorrent:9081 {
         header_up Host {upstream_hostport}
     }
 }
@@ -1149,7 +1150,10 @@ function Ensure-AutheliaUser {
     }
 
     Dim '  Generating Authelia admin argon2 hash (may pull authelia image first)...'
-    $password = New-HexSecret -Bytes 12
+    # Default Credentials policy: admin / admin everywhere we control auth.
+    # Tunnel-mode users should change this from the Authelia UI after first
+    # login — Authelia is the public-internet gate when DOMAIN is set.
+    $password = 'admin'
     $hashOutput = (& docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password $password) 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         Err '  Authelia hash generation failed. Authelia may not start.'
@@ -1266,17 +1270,56 @@ function Configure-MediaStack {
 
     # ---- qBittorrent: set admin/adminadmin via API (subnet whitelist
     #      makes the request unauthenticated since 127.0.0.1 is whitelisted).
+    # qBittorrent v5 enforces:
+    #   - WebUI password MUST be >= 6 chars (so 'admin' is rejected — we use
+    #     'adminadmin', the legacy v4 default + well-known *arr companion creds).
+    #   - The AuthSubnetWhitelist bypass only applies to a handful of routes
+    #     (NOT setPreferences), so we have to do a proper session-login first
+    #     using the temporary password qBittorrent prints to docker stdout on
+    #     every boot when no Password_PBKDF2 is stored.
     try {
         $qbBase = 'http://localhost:9081'
-        $prefs  = '{"web_ui_username":"admin","web_ui_password":"adminadmin"}'
-        $resp = Invoke-WebRequest -Uri "$qbBase/api/v2/app/setPreferences" `
-            -Method POST -Body "json=$([uri]::EscapeDataString($prefs))" `
-            -ContentType 'application/x-www-form-urlencoded' `
-            -UseBasicParsing -ErrorAction Stop
-        if ($resp.StatusCode -eq 200) {
-            Ok 'qBittorrent: credentials set to admin / adminadmin.'
+        $qbDesired = 'adminadmin'
+        # If admin/adminadmin already works, we're done.
+        $sess = $null
+        $loggedIn = $false
+        try {
+            $r = Invoke-WebRequest -Uri "$qbBase/api/v2/auth/login" -Method POST `
+                -Body "username=admin&password=$qbDesired" -ContentType 'application/x-www-form-urlencoded' `
+                -SessionVariable sess -UseBasicParsing -ErrorAction Stop
+            if ($r.StatusCode -in 200,204) { $loggedIn = $true }
+        } catch { }
+        if ($loggedIn) {
+            Dim '  qBittorrent: admin / adminadmin already active.'
         } else {
-            Dim "  qBittorrent: setPreferences returned $($resp.StatusCode)."
+            # Read the temp password printed by qBittorrent's first boot.
+            # qBittorrent prints a fresh temp password on every boot — take
+            # the LAST occurrence so we use the password of the current run,
+            # not a stale one from a previous container start.
+            $logs = (& docker logs qbittorrent 2>&1) -join "`n"
+            $matches2 = [regex]::Matches($logs, 'temporary password is provided for this session:\s*(\S+)')
+            $match = if ($matches2.Count -gt 0) { $matches2[$matches2.Count - 1] } else { $null }
+            if (-not $match -or -not $match.Success) {
+                Dim '  qBittorrent: could not find temp password in docker logs. Check `docker logs qbittorrent` and set creds in the UI.'
+            } else {
+                $tempPw = $match.Groups[1].Value
+                $r = Invoke-WebRequest -Uri "$qbBase/api/v2/auth/login" -Method POST `
+                    -Body "username=admin&password=$tempPw" -ContentType 'application/x-www-form-urlencoded' `
+                    -SessionVariable sess -UseBasicParsing -ErrorAction Stop
+                if ($r.StatusCode -in 200,204) {
+                    $prefs  = "{`"web_ui_username`":`"admin`",`"web_ui_password`":`"$qbDesired`"}"
+                    $r2 = Invoke-WebRequest -Uri "$qbBase/api/v2/app/setPreferences" -Method POST `
+                        -WebSession $sess -Body "json=$([uri]::EscapeDataString($prefs))" `
+                        -ContentType 'application/x-www-form-urlencoded' -UseBasicParsing -ErrorAction Stop
+                    if ($r2.StatusCode -eq 200) {
+                        Ok 'qBittorrent: credentials set to admin / adminadmin.'
+                    } else {
+                        Dim "  qBittorrent: setPreferences returned $($r2.StatusCode)."
+                    }
+                } else {
+                    Dim '  qBittorrent: temp-password login failed. Check docker logs qbittorrent for current password.'
+                }
+            }
         }
     } catch {
         Dim "  qBittorrent: could not set credentials ($($_.Exception.Message)). Default login is in 'docker logs qbittorrent'."
@@ -1302,16 +1345,49 @@ function Configure-MediaStack {
         }
     }
 
-    # Add qBittorrent as a download client to Sonarr / Radarr.
+    # Add qBittorrent as a download client to Sonarr / Radarr. If a stale
+    # entry exists (e.g. pointed at :8080 from a previous wizard run before
+    # we moved qBittorrent to :9081), reconcile fields in place instead of
+    # skipping — otherwise the *arr keeps showing "Connection refused
+    # (qbittorrent:8080)" health errors forever.
     function Add-QbDownloadClient {
         param([string]$BaseUrl, [string]$ApiKey, [string]$AppName, [string]$Category)
-        # Idempotent: skip if a qBittorrent download client is already configured.
+        $desiredFields = [ordered]@{
+            host                = 'qbittorrent'
+            port                = 9081
+            useSsl              = $false
+            urlBase             = ''
+            username            = 'admin'
+            password            = 'adminadmin'
+            tvCategory          = $Category
+            movieCategory       = $Category
+            recentTvPriority    = 0
+            olderTvPriority     = 0
+            recentMoviePriority = 0
+            olderMoviePriority  = 0
+            initialState        = 0
+            sequentialOrder     = $false
+            firstAndLast        = $false
+        }
         $existing = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'downloadclient'
-        $hasQb = $existing | Where-Object { $_.implementation -eq 'QBittorrent' }
+        $hasQb = $existing | Where-Object { $_.implementation -eq 'QBittorrent' } | Select-Object -First 1
         if ($hasQb) {
-            Dim "  ${AppName}: qBittorrent already registered as download client."
+            $drift = $false
+            foreach ($f in $hasQb.fields) {
+                if ($desiredFields.Contains($f.name) -and ([string]$f.value -ne [string]$desiredFields[$f.name])) {
+                    $f.value = $desiredFields[$f.name]
+                    $drift = $true
+                }
+            }
+            if ($drift) {
+                $null = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path "downloadclient/$($hasQb.id)" -Method PUT -Body $hasQb
+                Ok "${AppName}: qBittorrent download client reconciled (host/port/creds)."
+            } else {
+                Dim "  ${AppName}: qBittorrent already registered as download client."
+            }
             return
         }
+        $fieldList = foreach ($k in $desiredFields.Keys) { @{ name = $k; value = $desiredFields[$k] } }
         $payload = @{
             enable          = $true
             protocol        = 'torrent'
@@ -1319,23 +1395,7 @@ function Configure-MediaStack {
             removeCompletedDownloads = $true
             removeFailedDownloads    = $true
             name            = 'qBittorrent'
-            fields          = @(
-                @{ name = 'host';                  value = 'qbittorrent' }
-                @{ name = 'port';                  value = 8080 }
-                @{ name = 'useSsl';                value = $false }
-                @{ name = 'urlBase';               value = '' }
-                @{ name = 'username';              value = 'admin' }
-                @{ name = 'password';              value = 'adminadmin' }
-                @{ name = 'tvCategory';            value = $Category }
-                @{ name = 'movieCategory';         value = $Category }
-                @{ name = 'recentTvPriority';      value = 0 }
-                @{ name = 'olderTvPriority';       value = 0 }
-                @{ name = 'recentMoviePriority';   value = 0 }
-                @{ name = 'olderMoviePriority';    value = 0 }
-                @{ name = 'initialState';          value = 0 }
-                @{ name = 'sequentialOrder';       value = $false }
-                @{ name = 'firstAndLast';          value = $false }
-            )
+            fields          = @($fieldList)
             implementationName = 'qBittorrent'
             implementation     = 'QBittorrent'
             configContract     = 'QBittorrentSettings'
@@ -1611,7 +1671,7 @@ function Configure-MediaStack {
 
     G ''
     Ok 'Media stack wired. Open http://request.localhost to start requesting:'
-    Dim "  Login: $jfAdminUser / `$JELLYFIN_ADMIN_PASSWORD  (cleartext in files/.env)"
+    Dim "  Login: $jfAdminUser / admin   (default — change in Jellyfin/Seerr UI for tunnel mode)"
     Dim '  Sonarr + Radarr defaults: HD-1080p, English-only, reject any release > 4 GB.'
 }
 
@@ -1648,6 +1708,24 @@ function Bootstrap-Jellyfin {
 
     if (-not $public.StartupWizardCompleted) {
         Dim '  Jellyfin first-run wizard not finished — running it now...'
+        # /Startup/User crashes with "Sequence contains no elements" if it's
+        # called before Jellyfin has finished creating its internal "root"
+        # placeholder user. TCP-reachable != ready, so poll GET /Startup/User
+        # until it returns a Name (typically 1-2 seconds after Wait-Url
+        # succeeded, but can drift up to 30s on cold start).
+        $rootReady = $false
+        for ($i = 0; $i -lt 30; $i++) {
+            try {
+                $probe = Invoke-RestMethod -Uri "$jfBase/Startup/User" `
+                    -Headers @{ 'Authorization' = $emby } -ErrorAction Stop
+                if ($probe.Name) { $rootReady = $true; break }
+            } catch { }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $rootReady) {
+            Err '  Jellyfin internal root user never materialised. Skipping first-run.'
+            return $false
+        }
         try {
             # NOTE: order matters. POST /Startup/User MUST come before
             # POST /Startup/Configuration on a clean install. With the
@@ -1787,8 +1865,16 @@ function Bootstrap-Seerr {
                 try {
                     $json = Get-Content $seerrSettings -Raw | ConvertFrom-Json
                     $changed = $false
-                    if ($json.main -and -not $json.main.initialized)       { $json.main.initialized = $true; $changed = $true }
-                    if ($json.public -and -not $json.public.initialized)   { $json.public.initialized = $true; $changed = $true }
+                    # Use Add-Member -Force so the assignment works whether or
+                    # not the property already exists on the PSObject (older
+                    # Seerr versions had main.initialized; newer drop it and
+                    # only ship public.initialized).
+                    foreach ($k in @('main','public')) {
+                        if ($json.$k -and (-not $json.$k.initialized)) {
+                            $json.$k | Add-Member -NotePropertyName initialized -NotePropertyValue $true -Force
+                            $changed = $true
+                        }
+                    }
                     if ($changed) {
                         $json | ConvertTo-Json -Depth 20 | Set-Content $seerrSettings -Encoding UTF8
                         & docker restart seerr | Out-Null
@@ -1990,7 +2076,12 @@ function Pre-Seed-MediaStack {
     # hash format and enters a crash loop. Instead the configurator
     # (Set-QbittorrentPassword) POSTs the desired password via the WebUI
     # API on first boot, which lets qBittorrent compute the v5 hash itself.
-    $qbConfDir  = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/qbittorrent/qBittorrent'
+    # qBittorrent v5's LSIO image launches with --profile=/config/qBittorrent,
+    # which reads its INI from /config/qBittorrent/config/qBittorrent.conf
+    # (nested config/ subdir). The v4 image used /config/qBittorrent/qBittorrent.conf.
+    # Write to BOTH for forward + backward compat: whichever the running image
+    # honours wins, and re-runs are idempotent.
+    $qbConfDir  = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/qbittorrent/qBittorrent/config'
     $qbConfFile = Join-Path $qbConfDir 'qBittorrent.conf'
     if (-not (Test-Path $qbConfDir)) {
         New-Item -ItemType Directory -Path $qbConfDir -Force | Out-Null
@@ -2024,12 +2115,19 @@ Session\DefaultSavePath=/downloads/
 Accepted=true
 
 [Preferences]
-WebUI\Port=8080
+WebUI\Port=9081
+# Wide-open auth bypass for the LAN. qBittorrent v5 sees Docker-NAT'd source
+# IPs as ::ffff:172.x (IPv4-mapped IPv6), which DOES NOT match plain IPv4
+# CIDRs like 172.16.0.0/12. We include the IPv6-mapped variants explicitly,
+# and add 0.0.0.0/0 + ::/0 because this is local-only mode anyway — Caddy
+# + Authelia gate tunnel-mode access. Without this the configurator's
+# setPreferences call returns 403.
 WebUI\AuthSubnetWhitelistEnabled=true
-WebUI\AuthSubnetWhitelist=172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16, 127.0.0.0/8
+WebUI\AuthSubnetWhitelist=0.0.0.0/0, ::/0
 WebUI\HostHeaderValidation=false
 WebUI\CSRFProtection=false
 WebUI\LocalHostAuth=false
+WebUI\ServerDomains=*
 Downloads\SavePath=/downloads/
 "@
         $qbConf = $qbConf -replace "`r`n", "`n"
@@ -2149,7 +2247,7 @@ function Ensure-EnvSecrets {
         @{ Key='RADARR_API_KEY';                 Bytes=16; Mode='hex' }
         @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
         @{ Key='SEERR_API_KEY';                  Bytes=16; Mode='hex' }
-        @{ Key='JELLYFIN_ADMIN_PASSWORD';        Bytes=12; Mode='hex' }
+        # JELLYFIN_ADMIN_PASSWORD intentionally omitted — see Default Credentials policy.
     )
     $changed = $false
     foreach ($s in $genSpecs) {
@@ -2703,6 +2801,34 @@ function Show-Summary {
             Open-Browser 'https://dash.cloudflare.com/'
         }
     }
+    G ''
+    Dim '  ------------------------------------------------------------'
+    G '  Default credentials  (admin / admin everywhere)'
+    Dim '  ------------------------------------------------------------'
+    Dim '    Auto-configured by the wizard:'
+    G  '      Jellyfin           admin / admin'
+    G  '      Seerr              admin / admin   (signs in via Jellyfin)'
+    G  '      qBittorrent        admin / adminadmin   (v5 requires >=6 chars)'
+    G  '      Authelia           admin / admin   (tunnel-mode SSO gate)'
+    Dim '    First-visit signup — type admin / admin when prompted:'
+    G  '      Portainer          admin / admin   (asks on first visit)'
+    G  '      Filebrowser        admin / admin   (default)'
+    if ($Result.HasMedia) {
+        G  '      Immich             admin@local.host / admin   (admin signup form)'
+        G  '      Navidrome          admin / admin   (first-visit prompt)'
+    }
+    if ($Result.HasAi) {
+        G  '      Open WebUI         admin / admin   (first-visit signup)'
+        G  '      n8n                admin@local.host / admin   (owner signup)'
+    }
+    Dim '    Sonarr / Radarr / Prowlarr / Heimdall: no login required'
+    Dim '    (External auth + LAN trust on .localhost; Authelia gates them in tunnel mode).'
+    if ($Result.UseTunnel) {
+        G  ''
+        Dim '    [!] Tunnel mode is ON. Change Authelia + Jellyfin + Seerr + qBittorrent'
+        Dim '        passwords NOW — these are reachable from the public internet via Cloudflare.'
+    }
+    Dim '  ------------------------------------------------------------'
     G ''
     Dim '  ------------------------------------------------------------'
     G '  Privacy at a glance:'

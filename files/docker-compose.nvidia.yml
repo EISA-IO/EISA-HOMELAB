@@ -45,7 +45,7 @@ services:
   # Immich ML inference (CUDA). The image swap pulls the CUDA-enabled build
   # of immich-machine-learning so face detection / clip / search use the GPU.
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}-cuda
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v2.7.5}-cuda
     deploy:
       resources:
         reservations:

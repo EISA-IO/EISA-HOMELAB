@@ -22,7 +22,10 @@
 # =============================================================================
 services:
   ollama:
-    image: ollama/ollama:rocm
+    # Ollama's :rocm tag is a rolling stable. The base compose pins :0.23.2;
+    # keep the AMD variant on the matching version where possible (Ollama
+    # publishes :0.23.2-rocm). Bump in lockstep with the base ollama image.
+    image: ollama/ollama:0.23.2-rocm
     devices:
       - /dev/kfd
       - /dev/dri
@@ -40,7 +43,7 @@ services:
   # of immich-machine-learning. Container needs /dev/kfd + /dev/dri and the
   # 'video' group to talk to the GPU.
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}-rocm
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-v2.7.5}-rocm
     devices:
       - /dev/dri:/dev/dri
       - /dev/kfd:/dev/kfd
