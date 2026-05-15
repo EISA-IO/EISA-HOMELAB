@@ -23,9 +23,10 @@
 [CmdletBinding()]
 param(
     # First-run mode (no flag): run the full wizard.
-    [switch]$Reconfigure,   # force re-asking every value even if .env has it
-    [switch]$NoStart,       # render configs but don't `docker compose up`
-    [switch]$StartOnly      # skip wizard entirely; just bring the existing stack up
+    [switch]$Reconfigure,    # force re-asking every value even if .env has it
+    [switch]$NoStart,        # render configs but don't `docker compose up`
+    [switch]$StartOnly,      # skip wizard entirely; just bring the existing stack up
+    [switch]$EditMediaPaths  # standalone editor for MOVIES_PATH / TV_SHOWS_PATH / MUSIC_PATH / DOWNLOADS_PATH / PHOTOS_PATH
 )
 
 # ---------------------------------------------------------------------------
@@ -656,6 +657,144 @@ function Read-State {
 function Write-State {
     param($State)
     $State | ConvertTo-Json -Depth 5 | Set-Content $StateFile -Encoding ASCII
+}
+
+# ---------------------------------------------------------------------------
+# Edit + validate media folder locations standalone (menu option [6] in the
+# HOMELAB-MANAGER launchers). Reads/writes .env in place and offers to
+# recreate the containers whose bind mounts changed.
+# ---------------------------------------------------------------------------
+function Test-MediaPath {
+    # Returns [pscustomobject]@{ Status; Detail }. Status in 'ok','missing','file','error'.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return [pscustomobject]@{ Status = 'error'; Detail = 'empty' }
+    }
+    try {
+        if (-not (Test-Path $Path)) {
+            return [pscustomobject]@{ Status = 'missing'; Detail = "doesn't exist yet" }
+        }
+        $item = Get-Item $Path -ErrorAction Stop
+        if (-not $item.PSIsContainer) {
+            return [pscustomobject]@{ Status = 'file'; Detail = 'is a file, expected a folder' }
+        }
+        return [pscustomobject]@{ Status = 'ok'; Detail = 'exists' }
+    } catch {
+        return [pscustomobject]@{ Status = 'error'; Detail = $_.Exception.Message }
+    }
+}
+
+function Invoke-EditMediaPaths {
+    if (-not (Test-Path $EnvFile)) {
+        Err ".env not found at $EnvFile."
+        Dim '  Run [1] First-Run Setup once to create it, then come back here to tweak paths.'
+        return
+    }
+    $envMap = Read-EnvFile $EnvFile
+
+    # MOVIES_PATH and DOWNLOADS_PATH share TV_SHOWS_PATH defaults derivation logic
+    # in the wizard — keep this list in the same order so users see them together.
+    $keys = @(
+        @{ Key = 'MOVIES_PATH';    Label = 'Movies folder'    }
+        @{ Key = 'TV_SHOWS_PATH';  Label = 'TV Shows folder'  }
+        @{ Key = 'MUSIC_PATH';     Label = 'Music folder'     }
+        @{ Key = 'DOWNLOADS_PATH'; Label = 'Downloads folder' }
+        @{ Key = 'PHOTOS_PATH';    Label = 'Photos folder (Immich library)' }
+    )
+
+    Step 'Edit + validate your media folders' 'Shows each path with current status. Press Enter to keep a value; type a new path to change it. Missing folders can be created on the spot.'
+
+    G  '  Current values:'
+    foreach ($spec in $keys) {
+        $val = if ($envMap.Contains($spec.Key)) { $envMap[$spec.Key] } else { '' }
+        $r   = Test-MediaPath $val
+        $tag = switch ($r.Status) {
+            'ok'      { '[OK]     ' }
+            'missing' { '[MISSING]' }
+            'file'    { '[BAD]    ' }
+            'error'   { '[BAD]    ' }
+        }
+        $line = "    $tag  $($spec.Label.PadRight(40))  $val"
+        switch ($r.Status) {
+            'ok'      { G   $line }
+            'missing' { Dim $line }
+            default   { Err "$line  ($($r.Detail))" }
+        }
+    }
+    G ''
+
+    $changed = $false
+    foreach ($spec in $keys) {
+        $current = if ($envMap.Contains($spec.Key)) { $envMap[$spec.Key] } else { '' }
+        $raw     = Ask "$($spec.Label) (Enter = keep)" $current -AllowEmpty
+        if (-not $raw) { $raw = $current }
+        $new     = Format-Path $raw
+        if ($new -ne $current) {
+            $envMap[$spec.Key] = $new
+            $changed = $true
+            Ok "$($spec.Key) -> $new"
+        }
+
+        $r = Test-MediaPath $new
+        switch ($r.Status) {
+            'ok'      { Dim "    [OK] $new" }
+            'missing' {
+                if (Ask-YesNo "    Folder doesn't exist. Create it now?" $true) {
+                    try {
+                        New-Item -ItemType Directory -Force -Path $new | Out-Null
+                        Ok "    Created $new"
+                    } catch {
+                        Err "    Could not create: $($_.Exception.Message)"
+                    }
+                } else {
+                    Dim "    Left it missing — the container will create it on first start, but you should verify the disk it lives on has enough space."
+                }
+            }
+            'file'  { Err "    $new is a file, not a folder. Pick a different path." }
+            'error' { Err "    $new is unreadable: $($r.Detail)" }
+        }
+        G ''
+    }
+
+    if ($changed) {
+        Write-EnvFile $EnvFile $envMap
+        Ok '.env updated.'
+    } else {
+        Dim '  No path values changed.'
+    }
+
+    # Recreate affected containers so the new bind mounts take effect. These
+    # are every service in docker-compose.yml that mounts any of the 5 paths.
+    $mediaContainers = @(
+        'jellyfin','navidrome','immich-server','immich-machine-learning',
+        'filebrowser','tor-browser','sonarr','radarr','qbittorrent'
+    )
+    $running = @()
+    foreach ($c in $mediaContainers) {
+        $state = & docker inspect -f '{{.State.Running}}' $c 2>$null
+        if ($state -eq 'true') { $running += $c }
+    }
+    if ($running.Count -gt 0) {
+        G ''
+        Dim "  Containers currently using these paths: $($running -join ', ')"
+        Dim '  Bind mounts only refresh when a container is recreated.'
+        if (Ask-YesNo '  Recreate them now so the new paths take effect?' $changed) {
+            Push-Location $ProjectRoot
+            try {
+                # --force-recreate drops + recreates with the new mounts.
+                & docker compose --progress plain up -d --force-recreate @running
+                Ok 'Containers recreated.'
+            } catch {
+                Err "docker compose up failed: $($_.Exception.Message)"
+            } finally {
+                Pop-Location
+            }
+        } else {
+            Dim '  Skipped. Run [3] Stop Stack then [2] Start Stack later to apply.'
+        }
+    } else {
+        Dim '  No media containers are currently running — new paths will apply next time you Start Stack.'
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -3050,6 +3189,16 @@ Ensure-Docker -OS $script:OS
 
 $state  = Read-State
 $envMap = Read-EnvFile $EnvFile
+
+# -----------------------------------------------------------------------------
+# Branch 0: -EditMediaPaths — invoked by the HOMELAB-MANAGER launchers when
+# the user picks [6] Edit Media Folders. Standalone editor + validator for
+# the 5 host paths the media stack bind-mounts. Doesn't touch anything else.
+# -----------------------------------------------------------------------------
+if ($EditMediaPaths) {
+    Invoke-EditMediaPaths
+    exit 0
+}
 
 # -----------------------------------------------------------------------------
 # Branch A: -StartOnly — invoked by the HOMELAB-MANAGER launchers when the

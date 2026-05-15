@@ -372,6 +372,7 @@ main_menu() {
         say "   [3] Stop Stack            (compose down + cleanup)"
         say "   [4] List Stack            (show running containers + health)"
         say "   [5] LLM Manager           (pull, launch, delete Ollama models)"
+        say "   [6] Edit Media Folders    (movies / tv / music / downloads / photos)"
         echo
         say "   [0] Exit"
         echo
@@ -383,6 +384,7 @@ main_menu() {
             3) do_stop ;;
             4) do_list ;;
             5) ollama_boot ;;
+            6) do_edit_media ;;
             0) return 0 ;;
         esac
     done
@@ -414,6 +416,28 @@ do_first_run() {
     else
         err "  [!]  Wizard exited with code ${rc}."
     fi
+    echo
+    pause_return
+}
+
+# ============================================================================
+# [6] EDIT MEDIA FOLDERS
+# ============================================================================
+do_edit_media() {
+    clear
+    header "Edit Media Folders"
+    if ! ensure_pwsh; then pause_return; return; fi
+    if [ ! -f "${SETUP_PS1}" ]; then
+        err "  [X] setup.ps1 not found at ${SETUP_PS1}"
+        pause_return
+        return
+    fi
+    echo "  Shows current paths + status, lets you change any of them, validates"
+    echo "  each one on disk, offers to create missing folders, and (optionally)"
+    echo "  recreates the affected containers so the new mounts take effect."
+    echo "  ----------------------------------------------------------------"
+    pwsh -NoProfile -File "${SETUP_PS1}" -EditMediaPaths
+    echo "  ----------------------------------------------------------------"
     echo
     pause_return
 }

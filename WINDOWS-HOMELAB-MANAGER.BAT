@@ -62,6 +62,7 @@ echo   [2] Start Stack           (day-to-day, brings everything up)
 echo   [3] Stop Stack            (compose down + cleanup)
 echo   [4] List Stack            (show running containers + health)
 echo   [5] LLM Manager           (pull, launch, delete Ollama models)
+echo   [6] Edit Media Folders    (movies / tv / music / downloads / photos)
 echo.
 echo   [0] Exit
 echo.
@@ -73,6 +74,7 @@ if "!choice!"=="2" goto :DO_START
 if "!choice!"=="3" goto :DO_STOP
 if "!choice!"=="4" goto :DO_LIST
 if "!choice!"=="5" goto :OLLAMA_BOOT
+if "!choice!"=="6" goto :DO_EDIT_MEDIA
 if "!choice!"=="0" goto :END
 goto :MAIN_MENU
 
@@ -144,6 +146,34 @@ if "!EXITCODE!"=="0" (
     echo        Common cause: containers from an older install are blocking
     echo        these container_names. Pick [3] Stop Stack first, then retry.
 )
+echo.
+echo   Press any key to return to the main menu...
+pause >nul
+goto :MAIN_MENU
+
+
+:: =============================================================================
+:: [6] EDIT MEDIA FOLDERS  (validate + edit the 5 host paths the stack mounts)
+:: =============================================================================
+:DO_EDIT_MEDIA
+cls
+echo.
+echo  ============================================================
+echo   EISA HOMELAB ULTIMATE - Edit Media Folders
+echo  ============================================================
+echo.
+if not exist "%SETUP_PS1%" (
+    echo   [X] Could not find setup.ps1 at %SETUP_PS1%
+    echo.
+    pause
+    goto :MAIN_MENU
+)
+echo   Shows current paths + status, lets you change any of them, validates
+echo   each one on disk, offers to create missing folders, and (optionally)
+echo   recreates the affected containers so the new mounts take effect.
+echo   ----------------------------------------------------------------
+%PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -EditMediaPaths
+echo   ----------------------------------------------------------------
 echo.
 echo   Press any key to return to the main menu...
 pause >nul
