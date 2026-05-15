@@ -90,7 +90,7 @@ services:
       - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/navidrome:/data
-      - ${MUSIC_PATH:-F:/Music}:/music:ro
+      - ${MUSIC_PATH:-C:/MEDIA/Music}:/music:ro
     networks:
       - caddy
     profiles: [media, media-stream]
@@ -114,8 +114,8 @@ services:
       - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/jellyfin/library:/config
-      - ${MOVIES_PATH:-F:/Movies}:/media/movies
-      - ${TV_SHOWS_PATH:-F:/TV-Shows}:/media/tv
+      - ${MOVIES_PATH:-C:/MEDIA/Movies}:/media/movies
+      - ${TV_SHOWS_PATH:-C:/MEDIA/TV-Shows}:/media/tv
       - /tmp/jellyfin-transcode:/transcode
       - jellyfin_cache:/cache
     restart: always
@@ -130,10 +130,10 @@ services:
     image: filebrowser/filebrowser:v2.62.2
     container_name: filebrowser
     volumes:
-      - ${MOVIES_PATH:-F:/Movies}:/srv/movies
-      - ${TV_SHOWS_PATH:-F:/TV-Shows}:/srv/tv-shows
-      - ${MUSIC_PATH:-F:/Music}:/srv/music
-      - ${DOWNLOADS_PATH:-F:/Downloads}:/srv/downloads
+      - ${MOVIES_PATH:-C:/MEDIA/Movies}:/srv/movies
+      - ${TV_SHOWS_PATH:-C:/MEDIA/TV-Shows}:/srv/tv-shows
+      - ${MUSIC_PATH:-C:/MEDIA/Music}:/srv/music
+      - ${DOWNLOADS_PATH:-C:/MEDIA/Downloads}:/srv/downloads
       # /database and /config live in named docker volumes so we don't
       # rely on bind-mounted files existing on the host (which Docker
       # on Windows auto-creates as empty directories - that breaks the
@@ -393,7 +393,7 @@ services:
     environment:
       - VNC_PW=${TOR_VNC_PW}
     volumes:
-      - ${DOWNLOADS_PATH:-F:/Downloads}:/home/kasm-user/Downloads
+      - ${DOWNLOADS_PATH:-C:/MEDIA/Downloads}:/home/kasm-user/Downloads
     networks:
       - caddy
     restart: always
@@ -420,7 +420,7 @@ services:
       # unset gives the most private default. Valid values, for reference,
       # are comma-separated subsets of: host, api, microservices, jobs, io, repo.
     volumes:
-      - ${PHOTOS_PATH:-F:/Photos}:/data
+      - ${PHOTOS_PATH:-C:/MEDIA/Photos}:/data
       - /etc/localtime:/etc/localtime:ro
     ports:
       - "2283:2283"
@@ -516,7 +516,7 @@ services:
       - WEBUI_PORT=9081
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/qbittorrent:/config
-      - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
+      - ${DOWNLOADS_PATH:-C:/MEDIA/Downloads}:/downloads
     ports:
       - 9081:9081
       # BitTorrent listen port (TCP+UDP) - opening these on your router
@@ -561,8 +561,8 @@ services:
       - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/sonarr:/config
-      - ${TV_SHOWS_PATH:-F:/TV-Shows}:/tv
-      - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
+      - ${TV_SHOWS_PATH:-C:/MEDIA/TV-Shows}:/tv
+      - ${DOWNLOADS_PATH:-C:/MEDIA/Downloads}:/downloads
     ports:
       - 8989:8989
     restart: always
@@ -584,8 +584,8 @@ services:
       - TZ=${TZ:-Asia/Riyadh}
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/radarr:/config
-      - ${MOVIES_PATH:-F:/Movies}:/movies
-      - ${DOWNLOADS_PATH:-F:/Downloads}:/downloads
+      - ${MOVIES_PATH:-C:/MEDIA/Movies}:/movies
+      - ${DOWNLOADS_PATH:-C:/MEDIA/Downloads}:/downloads
     ports:
       - 7878:7878
     restart: always

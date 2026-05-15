@@ -646,6 +646,29 @@ function Format-Path {
     return $p -replace '\\', '/'
 }
 
+# Migrate the 5 media-path keys from the old F:\ defaults to the new
+# C:/MEDIA/ defaults. Only rewrites values that EXACTLY match the old
+# defaults so a user-customised path is never clobbered. Returns the
+# list of keys that were migrated. Idempotent — safe to call repeatedly.
+function Migrate-LegacyMediaDefaults {
+    param($EnvMap)
+    $oldToNew = [ordered]@{
+        'MOVIES_PATH'    = @{ Old = 'F:/Movies';    New = 'C:/MEDIA/Movies'    }
+        'TV_SHOWS_PATH'  = @{ Old = 'F:/TV-Shows';  New = 'C:/MEDIA/TV-Shows'  }
+        'MUSIC_PATH'     = @{ Old = 'F:/Music';     New = 'C:/MEDIA/Music'     }
+        'DOWNLOADS_PATH' = @{ Old = 'F:/Downloads'; New = 'C:/MEDIA/Downloads' }
+        'PHOTOS_PATH'    = @{ Old = 'F:/Photos';    New = 'C:/MEDIA/Photos'    }
+    }
+    $migrated = @()
+    foreach ($k in $oldToNew.Keys) {
+        if ($EnvMap.Contains($k) -and $EnvMap[$k] -eq $oldToNew[$k].Old) {
+            $EnvMap[$k] = $oldToNew[$k].New
+            $migrated += $k
+        }
+    }
+    return $migrated
+}
+
 # ---------------------------------------------------------------------------
 # State file (so subsequent runs can "just start").
 # ---------------------------------------------------------------------------
@@ -691,6 +714,14 @@ function Invoke-EditMediaPaths {
         return
     }
     $envMap = Read-EnvFile $EnvFile
+
+    # Auto-migrate any leftover legacy F:\ defaults to C:/MEDIA/ — but only
+    # when the value EXACTLY matches the old default (never a custom path).
+    $migrated = Migrate-LegacyMediaDefaults $envMap
+    if ($migrated.Count -gt 0) {
+        Write-EnvFile $EnvFile $envMap
+        Ok "Migrated legacy F:\ defaults to C:/MEDIA/ for: $($migrated -join ', ')"
+    }
 
     # MOVIES_PATH and DOWNLOADS_PATH share TV_SHOWS_PATH defaults derivation logic
     # in the wizard — keep this list in the same order so users see them together.
@@ -1030,10 +1061,14 @@ function Invoke-Wizard {
                 }
             }
         } else {
-            $pathHint = 'Type the full path to each folder. Examples: F:\Movies, D:\TV-Shows, F:/Music'
+            $pathHint = 'Type the full path to each folder. Examples: C:\MEDIA\Movies, D:\TV-Shows, C:/MEDIA/Music'
         }
+        # Migrate any leftover legacy F:\ defaults from older installs to the
+        # new C:/MEDIA/ defaults. Only touches values that EXACTLY match the
+        # old defaults — never a custom path the user typed in themselves.
+        [void](Migrate-LegacyMediaDefaults $envMap)
         if (-not $envMap.Contains('PHOTOS_PATH') -or [string]::IsNullOrWhiteSpace($envMap['PHOTOS_PATH'])) {
-            $envMap['PHOTOS_PATH'] = 'F:/Photos'
+            $envMap['PHOTOS_PATH'] = 'C:/MEDIA/Photos'
         }
         Step 'Step 3 — Your media folders' $pathHint
         $envMap['MOVIES_PATH']    = Format-Path (Ask 'MOVIES FOLDER LOCATION'    $envMap['MOVIES_PATH'])
@@ -3226,6 +3261,13 @@ if ($StartOnly) {
     if (Ensure-EnvSecrets -EnvMap $envMap) {
         Write-EnvFile $EnvFile $envMap
         Ok 'Filled in missing .env secrets.'
+    }
+
+    # 2b. Migrate legacy F:\ media defaults to C:/MEDIA/ silently.
+    $migratedPaths = Migrate-LegacyMediaDefaults $envMap
+    if ($migratedPaths.Count -gt 0) {
+        Write-EnvFile $EnvFile $envMap
+        Ok "Migrated legacy F:\ media defaults to C:/MEDIA/: $($migratedPaths -join ', ')"
     }
 
     # 3. Wipe any directories Docker auto-created at bind-file paths.
