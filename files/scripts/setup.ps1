@@ -183,29 +183,105 @@ function Ask-Choice {
     }
 }
 
-# Multi-pick service picker for the CUSTOM stack option. Each entry has a
-# friendly label + the underlying docker compose service name(s) it represents
-# (so 'Immich' expands to its 4 sidecars). Returns the flat list of service
-# names to pass to `docker compose up`.
-function Invoke-CustomServicePicker {
-    $entries = @(
+# Master list of pickable apps. One row per user-facing app — multi-container
+# apps (immich, n8n, hermes, the arr stack) expose their internal services in
+# the Services array so the wizard can hand them to `docker compose up`
+# positionally. Bundle is the wizard's logical group: 'ai', 'media-stream'
+# (streaming + request/download), or 'productivity'. The trimmer + custom
+# picker both source from this so we never drift.
+function Get-StackEntries {
+    @(
         # AI
-        [pscustomobject]@{ Label='ollama               (local LLMs - the brain)';                  Services=@('ollama') }
-        [pscustomobject]@{ Label='open-webui           (ChatGPT-style chat interface for the AI)'; Services=@('open-webui') }
-        [pscustomobject]@{ Label='searxng              (private metasearch engine)';               Services=@('searxng') }
-        [pscustomobject]@{ Label='local-deep-research  (AI research assistant)';                   Services=@('local-deep-research') }
-        [pscustomobject]@{ Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
-        [pscustomobject]@{ Label='hermes               (NousResearch self-improving agent + workspace UI)'; Services=@('hermes-agent','hermes-workspace') }
-        [pscustomobject]@{ Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
-        # MEDIA
-        [pscustomobject]@{ Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
-        [pscustomobject]@{ Label='navidrome            (music streaming)';                         Services=@('navidrome') }
-        [pscustomobject]@{ Label='immich               (photo + video library; bundles DB/Redis/ML)'; Services=@('immich-server','immich-machine-learning','immich-redis','immich-postgres') }
+        [pscustomobject]@{ Bundle='ai'; Label='ollama               (local LLMs - the brain)';                  Services=@('ollama') }
+        [pscustomobject]@{ Bundle='ai'; Label='open-webui           (ChatGPT-style chat interface for the AI)'; Services=@('open-webui') }
+        [pscustomobject]@{ Bundle='ai'; Label='searxng              (private metasearch engine)';               Services=@('searxng') }
+        [pscustomobject]@{ Bundle='ai'; Label='local-deep-research  (AI research assistant)';                   Services=@('local-deep-research') }
+        [pscustomobject]@{ Bundle='ai'; Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
+        [pscustomobject]@{ Bundle='ai'; Label='hermes               (NousResearch self-improving agent + workspace UI)'; Services=@('hermes-agent','hermes-dashboard','hermes-workspace') }
+        [pscustomobject]@{ Bundle='ai'; Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
+        # MEDIA — streaming
+        [pscustomobject]@{ Bundle='media-stream'; Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
+        [pscustomobject]@{ Bundle='media-stream'; Label='navidrome            (music streaming)';                         Services=@('navidrome') }
+        [pscustomobject]@{ Bundle='media-stream'; Label='immich               (photo + video library; bundles DB/Redis/ML)'; Services=@('immich-server','immich-machine-learning','immich-redis','immich-postgres') }
+        # MEDIA — request + download stack
+        [pscustomobject]@{ Bundle='media-stream'; Label='seerr                (request UI for movies/TV)';                 Services=@('seerr') }
+        [pscustomobject]@{ Bundle='media-stream'; Label='sonarr               (TV automation)';                            Services=@('sonarr') }
+        [pscustomobject]@{ Bundle='media-stream'; Label='radarr               (movie automation)';                         Services=@('radarr') }
+        [pscustomobject]@{ Bundle='media-stream'; Label='prowlarr             (indexer manager)';                          Services=@('prowlarr') }
+        [pscustomobject]@{ Bundle='media-stream'; Label='qbittorrent          (torrent download client)';                  Services=@('qbittorrent') }
         # PRODUCTIVITY
-        [pscustomobject]@{ Label='filebrowser          (web file manager)';                        Services=@('filebrowser') }
-        [pscustomobject]@{ Label='omni-tools           (grab-bag of web utilities)';               Services=@('omni-tools') }
-        [pscustomobject]@{ Label='tor-browser          (Tor Browser in a browser tab)';            Services=@('tor-browser') }
+        [pscustomobject]@{ Bundle='productivity'; Label='filebrowser          (web file manager)';                        Services=@('filebrowser') }
+        [pscustomobject]@{ Bundle='productivity'; Label='omni-tools           (grab-bag of web utilities)';                Services=@('omni-tools') }
+        [pscustomobject]@{ Bundle='productivity'; Label='tor-browser          (Tor Browser in a browser tab)';             Services=@('tor-browser') }
     )
+}
+
+# Show the user the services that the picked bundle will start and let them
+# drop any they don't want. Returns the flat (and possibly trimmed) list of
+# docker-compose service names to pass to `up`, OR $null if they accepted
+# the bundle as-is — in which case the caller stays in --profile mode.
+function Invoke-StackTrimmer {
+    param([string]$Stack)  # 'ai' | 'media' | 'productivity' | 'ultimate'
+
+    $all = Get-StackEntries
+    $entries = switch ($Stack) {
+        'ai'           { $all | Where-Object { $_.Bundle -eq 'ai' } }
+        'media'        { $all | Where-Object { $_.Bundle -eq 'media-stream' } }
+        'productivity' { $all | Where-Object { $_.Bundle -eq 'productivity' } }
+        'ultimate'     { $all }
+    }
+    $entries = @($entries)
+    if ($entries.Count -eq 0) { return $null }
+
+    G ''
+    G  '  Want to drop any of these containers before starting?'
+    Dim '  Press Enter to keep everything (the default), or type comma/space-'
+    Dim '  separated numbers (e.g. "5 8" or "5,8") to skip those containers.'
+    G  ''
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        G ("    [{0}] {1}" -f ($i + 1), $entries[$i].Label)
+    }
+    G  ''
+    Write-Host '  > Drop which? (Enter = keep all) ' -NoNewline -ForegroundColor Green
+    $raw = Read-Host
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+
+    $dropIdx = @()
+    foreach ($t in ($raw -split '[,\s]+' | Where-Object { $_ -match '^[0-9]+$' })) {
+        $n = [int]$t
+        if ($n -ge 1 -and $n -le $entries.Count -and ($dropIdx -notcontains $n)) {
+            $dropIdx += $n
+        }
+    }
+    if ($dropIdx.Count -eq 0) { return $null }
+
+    $kept = @()
+    $droppedLabels = @()
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        if ($dropIdx -contains ($i + 1)) {
+            $droppedLabels += ($entries[$i].Label -split '\s')[0]
+        } else {
+            $kept += $entries[$i].Services
+        }
+    }
+    Ok ('Dropped: ' + ($droppedLabels -join ', '))
+    return ($kept | Select-Object -Unique)
+}
+
+# Multi-pick service picker for the CUSTOM stack option. Pulls the same
+# master list as the trimmer so we never have to maintain two copies.
+function Invoke-CustomServicePicker {
+    $entries = @(Get-StackEntries)
+    # Pre-compute the index ranges for the "ai" / "media" / "prod" shortcuts
+    # so they keep working as the bundle membership of new apps changes.
+    $aiIdx   = @(); $mediaIdx = @(); $prodIdx = @()
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        switch ($entries[$i].Bundle) {
+            'ai'           { $aiIdx    += ($i + 1) }
+            'media-stream' { $mediaIdx += ($i + 1) }
+            'productivity' { $prodIdx  += ($i + 1) }
+        }
+    }
 
     G ''
     G  '  CUSTOM stack - pick the apps you want.'
@@ -225,11 +301,11 @@ function Invoke-CustomServicePicker {
     if ($lower -eq 'all') {
         $picked = 1..$entries.Count
     } elseif ($lower -eq 'ai') {
-        $picked = 1..7
+        $picked = $aiIdx
     } elseif ($lower -eq 'media') {
-        $picked = 8..10
+        $picked = $mediaIdx
     } elseif ($lower -in @('prod','productivity')) {
-        $picked = 11..13
+        $picked = $prodIdx
     } else {
         # Split on commas, spaces, or both; keep numeric tokens only.
         $tokens = $raw -split '[,\s]+' | Where-Object { $_ -match '^[0-9]+$' }
@@ -610,12 +686,28 @@ function Invoke-Wizard {
         }
     }
 
+    # Optional trim step for bundle picks. If the user wants every app in
+    # the bundle they pressed (the common case), this is one Enter — no
+    # disruption. If they want to drop a few (e.g. skip Vane + Tor in
+    # ULTIMATE), the trimmer returns the kept-services list and we switch
+    # to customServices mode so Start-Stack lists them positionally instead
+    # of activating a profile (profiles are all-or-nothing).
+    if ($stack -in @('ai','media','productivity','ultimate')) {
+        $kept = Invoke-StackTrimmer -Stack $stack
+        if ($kept) {
+            $customServices = $kept
+            $profiles       = @()
+        }
+    }
+
     # Compatibility flags surfaced in the summary / state blob.
+    $aiServices    = @('ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-dashboard','hermes-workspace','n8n','n8n-postgres','qdrant')
+    $mediaServices = @('jellyfin','navidrome','immich-server','immich-machine-learning','immich-redis','immich-postgres','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent')
     $hasAi    = ($profiles -contains 'ai') -or `
-                ($customServices | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-workspace','n8n','n8n-postgres','qdrant' }).Count -gt 0
+                ($customServices | Where-Object { $_ -in $aiServices }).Count -gt 0
     $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity') -or `
-                ($customServices | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser' }).Count -gt 0
-    Ok "Stack: $($stack.ToUpper())"
+                ($customServices | Where-Object { $_ -in $mediaServices }).Count -gt 0
+    Ok "Stack: $($stack.ToUpper())$(if ($customServices.Count -gt 0) { " (trimmed to $($customServices.Count) services)" })"
 
     # ---- Step 2: access mode ---------------------------------------------
     Step 'Step 2 — Hosting: local or online?' 'This decides whether your stack lives only on your LAN, or is reachable from anywhere on the internet through your own domain.'
@@ -1280,45 +1372,69 @@ function Configure-MediaStack {
     try {
         $qbBase = 'http://localhost:9081'
         $qbDesired = 'adminadmin'
-        # If admin/adminadmin already works, we're done.
         $sess = $null
         $loggedIn = $false
+
+        # Try the desired credentials first. If they're already in place
+        # (re-run), we skip the temp-password dance.
         try {
             $r = Invoke-WebRequest -Uri "$qbBase/api/v2/auth/login" -Method POST `
                 -Body "username=admin&password=$qbDesired" -ContentType 'application/x-www-form-urlencoded' `
                 -SessionVariable sess -UseBasicParsing -ErrorAction Stop
             if ($r.StatusCode -in 200,204) { $loggedIn = $true }
         } catch { }
-        if ($loggedIn) {
-            Dim '  qBittorrent: admin / adminadmin already active.'
-        } else {
-            # Read the temp password printed by qBittorrent's first boot.
-            # qBittorrent prints a fresh temp password on every boot — take
-            # the LAST occurrence so we use the password of the current run,
-            # not a stale one from a previous container start.
+
+        if (-not $loggedIn) {
+            # Read the temp password printed by qBittorrent's first boot
+            # (a fresh one on every container start — take the LAST match).
             $logs = (& docker logs qbittorrent 2>&1) -join "`n"
             $matches2 = [regex]::Matches($logs, 'temporary password is provided for this session:\s*(\S+)')
             $match = if ($matches2.Count -gt 0) { $matches2[$matches2.Count - 1] } else { $null }
-            if (-not $match -or -not $match.Success) {
-                Dim '  qBittorrent: could not find temp password in docker logs. Check `docker logs qbittorrent` and set creds in the UI.'
-            } else {
+            if ($match -and $match.Success) {
                 $tempPw = $match.Groups[1].Value
-                $r = Invoke-WebRequest -Uri "$qbBase/api/v2/auth/login" -Method POST `
-                    -Body "username=admin&password=$tempPw" -ContentType 'application/x-www-form-urlencoded' `
-                    -SessionVariable sess -UseBasicParsing -ErrorAction Stop
-                if ($r.StatusCode -in 200,204) {
-                    $prefs  = "{`"web_ui_username`":`"admin`",`"web_ui_password`":`"$qbDesired`"}"
-                    $r2 = Invoke-WebRequest -Uri "$qbBase/api/v2/app/setPreferences" -Method POST `
-                        -WebSession $sess -Body "json=$([uri]::EscapeDataString($prefs))" `
-                        -ContentType 'application/x-www-form-urlencoded' -UseBasicParsing -ErrorAction Stop
-                    if ($r2.StatusCode -eq 200) {
-                        Ok 'qBittorrent: credentials set to admin / adminadmin.'
-                    } else {
-                        Dim "  qBittorrent: setPreferences returned $($r2.StatusCode)."
-                    }
+                try {
+                    $r = Invoke-WebRequest -Uri "$qbBase/api/v2/auth/login" -Method POST `
+                        -Body "username=admin&password=$tempPw" -ContentType 'application/x-www-form-urlencoded' `
+                        -SessionVariable sess -UseBasicParsing -ErrorAction Stop
+                    if ($r.StatusCode -in 200,204) { $loggedIn = $true }
+                } catch { }
+            }
+        }
+
+        if (-not $loggedIn -or -not $sess) {
+            Dim '  qBittorrent: could not authenticate. Default login is in `docker logs qbittorrent`.'
+        } else {
+            # One POST sets credentials + the seeding policy.
+            #
+            # Seeding policy: stop the torrent the moment its download finishes.
+            # In qBittorrent the share-ratio limit is only checked AFTER
+            # download completes, so max_ratio=0 + max_ratio_act=0 (Pause/Stop
+            # in v5) means "as soon as the file is fully downloaded, stop
+            # uploading." Seed-time limits are disabled — the ratio check
+            # fires first anyway.
+            $prefsObj = [ordered]@{
+                web_ui_username                   = 'admin'
+                web_ui_password                   = $qbDesired
+                max_ratio_enabled                 = $true
+                max_ratio                         = 0
+                max_ratio_act                     = 0
+                max_seeding_time_enabled          = $false
+                max_seeding_time                  = -1
+                max_inactive_seeding_time_enabled = $false
+                max_inactive_seeding_time         = -1
+            }
+            $prefs = $prefsObj | ConvertTo-Json -Compress
+            try {
+                $r2 = Invoke-WebRequest -Uri "$qbBase/api/v2/app/setPreferences" -Method POST `
+                    -WebSession $sess -Body "json=$([uri]::EscapeDataString($prefs))" `
+                    -ContentType 'application/x-www-form-urlencoded' -UseBasicParsing -ErrorAction Stop
+                if ($r2.StatusCode -eq 200) {
+                    Ok 'qBittorrent: admin/adminadmin + seeding stops on download completion.'
                 } else {
-                    Dim '  qBittorrent: temp-password login failed. Check docker logs qbittorrent for current password.'
+                    Dim "  qBittorrent: setPreferences returned $($r2.StatusCode)."
                 }
+            } catch {
+                Dim "  qBittorrent: setPreferences failed: $($_.Exception.Message)"
             }
         }
     } catch {
@@ -2110,6 +2226,14 @@ function Pre-Seed-MediaStack {
         $qbConf = @"
 [BitTorrent]
 Session\DefaultSavePath=/downloads/
+# Stop seeding the instant a download completes. GlobalMaxRatio=0 means the
+# ratio target is reached at finish (ratio is 0 right after the last piece),
+# and ShareLimitAction=Stop triggers the action immediately. No seed-time
+# limit (-1 = disabled) since the ratio check fires first.
+Session\GlobalMaxRatio=0
+Session\GlobalMaxSeedingMinutes=-1
+Session\GlobalMaxInactiveSeedingMinutes=-1
+Session\ShareLimitAction=Stop
 
 [LegalNotice]
 Accepted=true
@@ -2953,8 +3077,8 @@ if ($StartOnly) {
     $useTunnel = [bool]$stateBlob.useTunnel
     $gpuMode   = [string]$stateBlob.gpuMode
     if ($customSvc -and $customSvc.Count -gt 0) {
-        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-workspace','n8n' }).Count -gt 0
-        $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent' }).Count -gt 0
+        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-dashboard','hermes-workspace','n8n','n8n-postgres','qdrant' }).Count -gt 0
+        $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','immich-machine-learning','immich-redis','immich-postgres','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent' }).Count -gt 0
     } else {
         $hasAi    = $profiles -contains 'ai'
         $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity')
