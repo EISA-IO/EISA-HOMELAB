@@ -648,7 +648,7 @@ function Format-Path {
 
 # Migrate the 5 media-path keys to the current per-OS defaults:
 #   Windows/Linux: C:/MEDIA/{Movies,TV-Shows,Music,Downloads,Photos}
-#   macOS:         $HOME/Documents/{Movies,TV-Shows,Music,Downloads,Photos}
+#   macOS:         $HOME/Documents/MEDIA/{Movies,TV-Shows,Music,Downloads,Photos}
 # Only rewrites values that EXACTLY match a known LEGACY default so a
 # user-customised path is never clobbered. Each platform considers the
 # OTHER platform's known defaults as legacy too — that way a user who
@@ -662,11 +662,11 @@ function Migrate-LegacyMediaDefaults {
     $keys    = @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH','PHOTOS_PATH')
 
     if ($script:OS -eq 'Mac') {
-        $newPrefix     = "$h/Documents"
+        $newPrefix     = "$h/Documents/MEDIA"
         $legacyPrefixes = @($h, "$h/Documents", 'C:/MEDIA', 'F:')
     } else {
         $newPrefix     = 'C:/MEDIA'
-        $legacyPrefixes = @('C:/MEDIA', 'F:', "$h/Documents", $h)
+        $legacyPrefixes = @('C:/MEDIA', 'F:', "$h/Documents/MEDIA", "$h/Documents", $h)
     }
 
     $migrated = @()
@@ -1065,17 +1065,17 @@ function Invoke-Wizard {
     # ---- Step 4: media folders (only if media stack) ---------------------
     if ($hasMedia) {
         if ($script:OS -eq 'Mac') {
-            $pathHint = 'Type the full path to each folder. Examples: ~/Documents/Movies, /Volumes/Media/Movies'
+            $pathHint = 'Type the full path to each folder. Examples: ~/Documents/MEDIA/Movies, /Volumes/Media/Movies'
             # If the defaults still look Windows-y, swap to sensible Mac defaults.
             $homePath = $HOME
             foreach ($k in @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH','PHOTOS_PATH')) {
                 if (-not $envMap.Contains($k) -or $envMap[$k] -match '^[A-Za-z]:') {
                     $envMap[$k] = switch ($k) {
-                        'MOVIES_PATH'    { "$homePath/Documents/Movies" }
-                        'TV_SHOWS_PATH'  { "$homePath/Documents/TV-Shows" }
-                        'MUSIC_PATH'     { "$homePath/Documents/Music" }
-                        'DOWNLOADS_PATH' { "$homePath/Documents/Downloads" }
-                        'PHOTOS_PATH'    { "$homePath/Documents/Photos" }
+                        'MOVIES_PATH'    { "$homePath/Documents/MEDIA/Movies" }
+                        'TV_SHOWS_PATH'  { "$homePath/Documents/MEDIA/TV-Shows" }
+                        'MUSIC_PATH'     { "$homePath/Documents/MEDIA/Music" }
+                        'DOWNLOADS_PATH' { "$homePath/Documents/MEDIA/Downloads" }
+                        'PHOTOS_PATH'    { "$homePath/Documents/MEDIA/Photos" }
                     }
                 }
             }
