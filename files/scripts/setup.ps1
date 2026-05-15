@@ -649,24 +649,23 @@ function Format-Path {
 # Migrate the 5 media-path keys to the current per-OS defaults:
 #   Windows/Linux: C:/MEDIA/{Movies,TV-Shows,Music,Downloads,Photos}
 #   macOS:         $HOME/Documents/MEDIA/{Movies,TV-Shows,Music,Downloads,Photos}
-# Only rewrites values that EXACTLY match a known LEGACY default so a
-# user-customised path is never clobbered. Each platform considers the
-# OTHER platform's known defaults as legacy too — that way a user who
-# copies an old .env between Mac and Windows still gets migrated. The
-# function relies on $script:OS being set by the main flow before any
-# branch invokes it. Returns the list of keys that were migrated.
+# Only rewrites values that match a KNOWN LEGACY SHAPE so a custom path
+# the user typed (e.g. /Volumes/Big/Music, E:\My-Stuff) is never touched.
+# Legacy shapes are matched by regex so they work regardless of which
+# username, drive letter, or platform produced them — that way a .env
+# copied between Mac and Windows still migrates cleanly.
+# Relies on $script:OS being set by the main flow before any branch
+# invokes it. Returns the list of keys that were migrated.
 function Migrate-LegacyMediaDefaults {
     param($EnvMap)
-    $h = $HOME
+    $h = $HOME -replace '\\','/'
     $folders = @('Movies','TV-Shows','Music','Downloads','Photos')
     $keys    = @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH','PHOTOS_PATH')
 
     if ($script:OS -eq 'Mac') {
-        $newPrefix     = "$h/Documents/MEDIA"
-        $legacyPrefixes = @($h, "$h/Documents", 'C:/MEDIA', 'F:')
+        $newPrefix = "$h/Documents/MEDIA"
     } else {
-        $newPrefix     = 'C:/MEDIA'
-        $legacyPrefixes = @('C:/MEDIA', 'F:', "$h/Documents/MEDIA", "$h/Documents", $h)
+        $newPrefix = 'C:/MEDIA'
     }
 
     $migrated = @()
@@ -674,11 +673,22 @@ function Migrate-LegacyMediaDefaults {
         $k = $keys[$i]
         $f = $folders[$i]
         if (-not $EnvMap.Contains($k)) { continue }
-        $current = $EnvMap[$k]
+        $current = ($EnvMap[$k] -replace '\\','/').TrimEnd('/')
         $new     = "$newPrefix/$f"
         if ($current -eq $new) { continue }   # already on the new default
-        foreach ($p in $legacyPrefixes) {
-            if ($current -eq "$p/$f") {
+
+        $fEsc = [regex]::Escape($f)
+        $patterns = @(
+            "^F:/$fEsc$",                              # F:/Movies (oldest Windows default)
+            "^C:/MEDIA/$fEsc$",                        # C:/MEDIA/Movies (current Windows default)
+            "^/Users/[^/]+/$fEsc$",                    # /Users/john/Movies (oldest Mac default)
+            "^/Users/[^/]+/Documents/$fEsc$",          # /Users/john/Documents/Movies (previous Mac default)
+            "^/Users/[^/]+/Documents/MEDIA/$fEsc$",    # /Users/john/Documents/MEDIA/Movies (current Mac default)
+            "^/home/[^/]+/$fEsc$",                     # /home/john/Movies (Linux equivalent)
+            "^/home/[^/]+/Documents/MEDIA/$fEsc$"      # /home/john/Documents/MEDIA/Movies
+        )
+        foreach ($pat in $patterns) {
+            if ($current -match $pat) {
                 $EnvMap[$k] = $new
                 $migrated += $k
                 break
