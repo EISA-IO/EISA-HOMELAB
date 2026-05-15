@@ -151,17 +151,17 @@ function Open-Browser {
 
 # ---------------------------------------------------------------------------
 # Add-DesktopShortcut: drops a one-click "Start EISA Homelab" launcher on the
-# user's Desktop. Windows shortcut points at the repo's start.bat (.lnk via
-# WScript.Shell COM); macOS copies start.command to ~/Desktop and marks it
-# executable. Idempotent.
+# user's Desktop. Windows shortcut points at the repo's
+# WINDOWS_HOMELAB_START.bat (.lnk via WScript.Shell COM); macOS copies
+# MAC_HOMELAB_START.command to ~/Desktop and marks it executable. Idempotent.
 # ---------------------------------------------------------------------------
 function Add-DesktopShortcut {
-    # ProjectRoot = .../files, start.* lives one level up at the repo root.
+    # ProjectRoot = .../files, the start launchers live one level up at the repo root.
     $repoRoot = Split-Path $ProjectRoot -Parent
     if ($script:OS -eq 'Windows') {
-        $target = Join-Path $repoRoot 'start.bat'
+        $target = Join-Path $repoRoot 'WINDOWS_HOMELAB_START.bat'
         if (-not (Test-Path $target)) {
-            Dim "  start.bat not found at $target — skipping desktop shortcut."
+            Dim "  WINDOWS_HOMELAB_START.bat not found at $target — skipping desktop shortcut."
             return
         }
         $desktop = [Environment]::GetFolderPath('Desktop')
@@ -175,7 +175,7 @@ function Add-DesktopShortcut {
             $s  = $sh.CreateShortcut($lnk)
             $s.TargetPath       = $target
             $s.WorkingDirectory = $repoRoot
-            # Use cmd.exe's icon — start.bat itself has none, the shell would
+            # Use cmd.exe's icon — the .bat itself has none, the shell would
             # otherwise show a blank icon. Keeps it recognisable on Desktop.
             $s.IconLocation     = "$env:SystemRoot\System32\cmd.exe,0"
             $s.Description      = 'Start EISA Homelab (Docker + stack + Heimdall)'
@@ -185,9 +185,9 @@ function Add-DesktopShortcut {
             Dim "  Could not create desktop shortcut: $($_.Exception.Message)"
         }
     } elseif ($script:OS -eq 'Mac') {
-        $target = Join-Path $repoRoot 'start.command'
+        $target = Join-Path $repoRoot 'MAC_HOMELAB_START.command'
         if (-not (Test-Path $target)) {
-            Dim "  start.command not found at $target — skipping desktop launcher."
+            Dim "  MAC_HOMELAB_START.command not found at $target — skipping desktop launcher."
             return
         }
         $desktop = Join-Path $HOME 'Desktop'

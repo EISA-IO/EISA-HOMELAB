@@ -6,8 +6,8 @@
 # and then opens Heimdall in your default browser.
 #
 # Use MAC-HOMELAB-MANAGER.COMMAND for the menu-driven first-run wizard,
-# stop/list, and the LLM manager. start.command is intentionally a
-# no-questions launcher — double-click and walk away.
+# stop/list, and the LLM manager. MAC_HOMELAB_START.command is intentionally
+# a no-questions launcher — double-click and walk away.
 # =============================================================================
 
 set -u
@@ -38,7 +38,7 @@ fi
 if [ ! -f "$SETUP_PS1" ]; then
     echo "  [X] Could not find setup.ps1 at:"
     echo "      $SETUP_PS1"
-    echo "      Run start.command from the homelab repo root."
+    echo "      Run MAC_HOMELAB_START.command from the homelab repo root."
     echo
     read -rp "  Press Enter to close..."
     exit 1

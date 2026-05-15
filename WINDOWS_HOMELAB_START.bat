@@ -12,8 +12,8 @@ mode con: cols=120 lines=32 >nul 2>&1
 :: then opens Heimdall in your default browser.
 ::
 :: Use WINDOWS-HOMELAB-MANAGER.BAT for the menu-driven first-run wizard,
-:: stop/list, and the LLM manager. start.bat is intentionally a no-questions
-:: launcher — double-click and walk away.
+:: stop/list, and the LLM manager. WINDOWS_HOMELAB_START.bat is intentionally
+:: a no-questions launcher — double-click and walk away.
 :: =============================================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -36,7 +36,7 @@ echo.
 if not exist "%SETUP_PS1%" (
     echo   [X] Could not find setup.ps1 at:
     echo       %SETUP_PS1%
-    echo       Run start.bat from the homelab repo root.
+    echo       Run WINDOWS_HOMELAB_START.bat from the homelab repo root.
     echo.
     pause
     exit /b 1
