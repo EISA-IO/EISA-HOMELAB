@@ -3460,7 +3460,15 @@ if (-not $NoStart) {
     } else {
         'http://hub.localhost'
     }
-    Dim "  Opening Heimdall at $heimdallUrl ..."
+    # Heimdall is up the moment its container reports running, but the
+    # internal nginx + PHP-FPM stack can still 502 for a second or two
+    # while warming. Give it a visible 5s countdown so the user knows
+    # why we're stalling.
+    for ($i = 5; $i -ge 1; $i--) {
+        Write-Host "`r  Opening Heimdall at $heimdallUrl in ${i}s... " -NoNewline -ForegroundColor DarkGreen
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "`r  Opening Heimdall at $heimdallUrl ...           " -ForegroundColor DarkGreen
     Open-Browser $heimdallUrl
     # 2. Offer a Desktop shortcut for next time. Default = yes, since users
     #    who don't want desktop clutter can just say n.
