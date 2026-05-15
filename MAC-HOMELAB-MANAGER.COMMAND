@@ -478,7 +478,7 @@ do_stop() {
         filebrowser omni-tools n8n qdrant ollama open-webui searxng
         local-deep-research vane Portainer tor-browser
         immich-server immich-machine-learning immich-redis immich-postgres
-        hermes-agent hermes-workspace
+        seerr sonarr radarr prowlarr qbittorrent
     )
 
     echo "  [2/3] Stopping any leftover containers by name..."
@@ -567,7 +567,7 @@ do_list() {
         filebrowser omni-tools n8n qdrant ollama open-webui searxng
         local-deep-research vane Portainer tor-browser
         immich-server immich-machine-learning immich-redis immich-postgres
-        hermes-agent hermes-workspace
+        seerr sonarr radarr prowlarr qbittorrent
     )
 
     printf '  %-28s  %-10s  %-11s  %s\n' "CONTAINER" "STATE" "HEALTH" "STATUS"

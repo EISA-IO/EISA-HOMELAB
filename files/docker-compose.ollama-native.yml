@@ -21,13 +21,11 @@
 #     `native-disabled` (a profile we never activate). With `--profile ai`
 #     still in effect for the rest of the AI stack, ollama is the only
 #     service excluded.
-#   - `!override`s open-webui/local-deep-research/vane/hermes-agent
-#     `depends_on` so the missing ollama doesn't block them from starting.
-#   - Repoints those four at http://host.docker.internal:11434 — Docker
+#   - `!override`s open-webui/local-deep-research/vane `depends_on` so the
+#     missing ollama doesn't block them from starting.
+#   - Repoints those three at http://host.docker.internal:11434 — Docker
 #     Desktop on Mac maps that hostname to the host loopback automatically,
 #     so they reach the Mac-native Ollama serving on port 11434 via Metal.
-#   - hermes-dashboard and hermes-workspace only depend on hermes-agent,
-#     not ollama directly, so they need no override here.
 #
 # Note: Immich's machine-learning service still runs CPU-only on Mac (no
 # Metal-enabled image upstream). Jellyfin transcoding is also CPU-only.
@@ -68,13 +66,3 @@ services:
       - searxng
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  hermes-agent:
-    depends_on: !override []
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      OLLAMA_HOST: 'http://host.docker.internal:11434'
-      OLLAMA_BASE_URL: 'http://host.docker.internal:11434'
-      OPENAI_API_BASE: 'http://host.docker.internal:11434/v1'
-      OPENAI_BASE_URL: 'http://host.docker.internal:11434/v1'

@@ -244,7 +244,7 @@ function Ask-Choice {
 }
 
 # Master list of pickable apps. One row per user-facing app — multi-container
-# apps (immich, n8n, hermes, the arr stack) expose their internal services in
+# apps (immich, n8n, the arr stack) expose their internal services in
 # the Services array so the wizard can hand them to `docker compose up`
 # positionally. Bundle is the wizard's logical group: 'ai', 'media-stream'
 # (streaming + request/download), or 'productivity'. The trimmer + custom
@@ -257,7 +257,6 @@ function Get-StackEntries {
         [pscustomobject]@{ Bundle='ai'; Label='searxng              (private metasearch engine)';               Services=@('searxng') }
         [pscustomobject]@{ Bundle='ai'; Label='local-deep-research  (AI research assistant)';                   Services=@('local-deep-research') }
         [pscustomobject]@{ Bundle='ai'; Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
-        [pscustomobject]@{ Bundle='ai'; Label='hermes               (NousResearch self-improving agent + workspace UI)'; Services=@('hermes-agent','hermes-dashboard','hermes-workspace') }
         [pscustomobject]@{ Bundle='ai'; Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
         # MEDIA STREAMING — what your friends/family will actually watch
         [pscustomobject]@{ Bundle='media-streaming'; Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
@@ -690,8 +689,6 @@ function Invoke-Wizard {
                 'searxng             private search'
                 'local-deep-research AI research'
                 'vane                answer engine'
-                'hermes-agent        self-improving agent'
-                'hermes-workspace    web UI for hermes-agent'
                 'n8n + postgres      workflow automation'
                 'qdrant              vector database'
             )
@@ -779,7 +776,7 @@ function Invoke-Wizard {
     }
 
     # Compatibility flags surfaced in the summary / state blob.
-    $aiServices    = @('ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-dashboard','hermes-workspace','n8n','n8n-postgres','qdrant')
+    $aiServices    = @('ollama','open-webui','searxng','local-deep-research','vane','n8n','n8n-postgres','qdrant')
     $mediaServices = @('jellyfin','navidrome','immich-server','immich-machine-learning','immich-redis','immich-postgres','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent')
     $hasAi    = ($profiles -contains 'ai') -or `
                 ($customServices | Where-Object { $_ -in $aiServices }).Count -gt 0
@@ -989,8 +986,6 @@ function Invoke-Wizard {
         @{ Key='POSTGRES_PASSWORD';              Bytes=24; Mode='hex' }
         @{ Key='N8N_ENCRYPTION_KEY';             Bytes=32; Mode='hex' }
         @{ Key='N8N_USER_MANAGEMENT_JWT_SECRET'; Bytes=32; Mode='hex' }
-        @{ Key='HERMES_API_KEY';                 Bytes=32; Mode='hex' }
-        @{ Key='HERMES_DASHBOARD_TOKEN';         Bytes=32; Mode='hex' }
         @{ Key='NEXTAUTH_SECRET';                Bytes=32; Mode='b64' }
         @{ Key='LINKWARDEN_DB_PASSWORD';         Bytes=20; Mode='hex' }
         @{ Key='DB_PASSWORD';                    Bytes=20; Mode='hex' }
@@ -1009,9 +1004,6 @@ function Invoke-Wizard {
                 New-Base64Secret -Bytes $s.Bytes
             }
         }
-    }
-    if (Test-Placeholder $envMap['HERMES_WORKSPACE_PASSWORD']) {
-        $envMap['HERMES_WORKSPACE_PASSWORD'] = New-HexSecret 12
     }
     Ok 'Secrets generated.'
 
@@ -1109,10 +1101,6 @@ http://tor.localhost {
 # ===== AI =====
 http://chat.localhost {
     reverse_proxy host.docker.internal:9002
-}
-
-http://hermes.localhost {
-    reverse_proxy hermes-workspace:3000
 }
 
 http://n8n.localhost {
@@ -2180,148 +2168,6 @@ function Configure-SeerrServers {
 # - Skips writing a file if the user has already started the app (config
 #   exists with a different API key) — preserves their customisations.
 # ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Configure-HermesAgent: points the hermes-agent container at the in-stack
-# Ollama instead of its default (OpenRouter + claude-opus-4.6, which 401s
-# without an account). Without this, hermes-workspace shows:
-#   "Authentication required - Hermes Agent rejected the connection token"
-# even though the workspace and agent tokens match — the underlying agent
-# is in error mode because its upstream LLM provider rejects requests.
-#
-# Strategy: overwrite /opt/data/config.yaml inside the hermes-agent
-# container with our Ollama settings, then restart hermes-agent and
-# hermes-workspace so the workspace reconnects. Idempotent: skips if the
-# file already points at http://ollama.
-# ---------------------------------------------------------------------------
-function Configure-HermesAgent {
-    param($EnvMap)
-    $running = (docker ps --filter 'name=^hermes-agent$' --format '{{.Names}}') 2>&1
-    if ($running -ne 'hermes-agent') {
-        Dim '  Hermes agent not running — skipping Ollama wiring.'
-        return
-    }
-
-    $model   = [string]$EnvMap['HERMES_DEFAULT_MODEL']
-    $context = [string]$EnvMap['HERMES_DEFAULT_CONTEXT']
-    if ([string]::IsNullOrWhiteSpace($model))   { $model   = 'carstenuhlig/omnicoder-2-9b:q4_k_m' }
-    if ([string]::IsNullOrWhiteSpace($context)) { $context = '65536' }
-
-    # Idempotent check on the AGENT's config: require BOTH the Ollama base_url
-    # AND the auxiliary block to be present. Older versions of this function
-    # wrote the base_url but not the auxiliary block, leaving the agent's
-    # secondary client trying OpenRouter on every turn — we want to upgrade
-    # those configs in place.
-    $agentConfigOk = $false
-    $current = (& docker exec hermes-agent cat /opt/data/config.yaml 2>&1) -join "`n"
-    if ($LASTEXITCODE -eq 0 -and `
-        $current -match 'http://ollama:11434' -and `
-        $current -match '(?ms)^auxiliary:' -and `
-        $current -match 'provider:\s*"main"') {
-        $agentConfigOk = $true
-        Dim '  Hermes agent already configured (Ollama + auxiliary=main).'
-    }
-    # Always (re-)seed the WORKSPACE side. Its config lives at /tmp/.hermes/
-    # which is wiped on every container recreate, so re-running on a clean
-    # boot is normal — keep it cheap and unconditional.
-    Set-HermesWorkspaceConfig -Model $model
-    if ($agentConfigOk) { return }
-
-    # config.yaml. provider: "custom" because the bare alias "ollama" maps
-    # to "custom" in hermes' provider table (see providers.py), which then
-    # reads base_url from this file. api_mode chat_completions so the
-    # agent talks to Ollama via its OpenAI-compatible /v1 endpoint.
-    $cfg = @"
-# Auto-generated by setup.ps1. Points Hermes Agent at the in-stack Ollama
-# (carstenuhlig/omnicoder-2-9b by default). Override the model per session
-# in the Hermes Workspace UI (Settings -> Model) — anything you have pulled
-# in Ollama works (e.g. huihui_ai/gemma-4-abliterated:e4b-q4_K).
-
-model:
-  default: "$model"
-  provider: "custom"
-  base_url: "http://ollama:11434/v1"
-  api_key: "ollama"
-  api_mode: "chat_completions"
-  context_length: $context
-
-# Force every auxiliary task (compression, summarization, vision, web extract,
-# session search) to use the SAME endpoint as the main turn client — i.e.
-# our Ollama. Without this the auxiliary client auto-detects providers
-# starting at OpenRouter, hits 401 (no OPENROUTER_API_KEY), and spams
-# "AuthenticationError" warnings on every turn even when the main chat
-# works. "main" tells Hermes to mirror the model.* block above.
-auxiliary:
-  vision:
-    provider: "main"
-    model: ""
-  web_extract:
-    provider: "main"
-    model: ""
-  session_search:
-    provider: "main"
-    model: ""
-  compression:
-    provider: "main"
-    model: ""
-"@
-    $cfg = $cfg -replace "`r`n", "`n"
-    $tmpPath = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-config-" + [Guid]::NewGuid().ToString('N') + '.yaml')
-    [System.IO.File]::WriteAllText($tmpPath, $cfg, [System.Text.UTF8Encoding]::new($false))
-    try {
-        & docker cp $tmpPath hermes-agent:/opt/data/config.yaml | Out-Null
-        # config.yaml writes from the agent run as PUID/PGID 1000 — match.
-        & docker exec --user 0 hermes-agent chown 1000:1000 /opt/data/config.yaml | Out-Null
-        Ok "Hermes Agent config written (provider=custom, base_url=ollama:11434, default model=$model)."
-    } catch {
-        Err "  Hermes Agent config write failed: $($_.Exception.Message)"
-        Remove-Item $tmpPath -ErrorAction SilentlyContinue
-        return
-    }
-    Remove-Item $tmpPath -ErrorAction SilentlyContinue
-
-    Dim '  Restarting hermes-agent + hermes-workspace so they pick up the new config...'
-    & docker restart hermes-agent hermes-dashboard hermes-workspace 2>&1 | Out-Null
-    # Re-seed the workspace post-restart since the recreate wiped /tmp.
-    Set-HermesWorkspaceConfig -Model $model
-    Ok 'Hermes restarted — workspace should now show "connected" once the agent finishes booting.'
-}
-
-# ---------------------------------------------------------------------------
-# Set-HermesWorkspaceConfig: drops a tiny config.yaml inside the workspace
-# container so its /api/connection-status reports modelConfigured:true. Without
-# it the workspace greets the user with "Welcome! Let's connect your backend."
-# even though the agent + Ollama are wired correctly. /tmp is wiped on every
-# container recreate, so we re-seed every wizard run.
-# ---------------------------------------------------------------------------
-function Set-HermesWorkspaceConfig {
-    param([string]$Model)
-    $running = (docker ps --filter 'name=^hermes-workspace$' --format '{{.Names}}') 2>&1
-    if ($running -ne 'hermes-workspace') { return }
-    $wsBase = 'http://localhost:3030'
-    if (-not (Wait-Url -Url $wsBase -TimeoutSeconds 60)) {
-        Dim '  Workspace not reachable on :3030; skipping welcome-bypass seed.'
-        return
-    }
-    $wsCfg = @"
-# Auto-generated by setup.ps1. Tells Hermes Workspace which model is "active"
-# so /api/connection-status reports modelConfigured:true and the onboarding
-# welcome screen doesn't show. The actual agent<->Ollama wiring lives in the
-# hermes-agent container's own config.yaml — this is the workspace's shim.
-model:
-  default: "$Model"
-  provider: "custom"
-"@
-    $wsCfg = $wsCfg -replace "`r`n", "`n"
-    try {
-        $wsCfg | & docker exec -i hermes-workspace sh -c 'mkdir -p /tmp/.hermes && cat > /tmp/.hermes/config.yaml' 2>&1 | Out-Null
-        Ok 'Hermes Workspace pre-seeded — welcome screen bypassed on next visit.'
-    } catch {
-        Dim "  Workspace config seed failed: $($_.Exception.Message)"
-    }
-}
-
-# ---------------------------------------------------------------------------
 function Pre-Seed-MediaStack {
     param($EnvMap)
 
@@ -2537,7 +2383,7 @@ function Ensure-HeimdallTiles {
         $sub = [ordered]@{
             1 = 'chat'; 2 = 'movie'; 3 = 'music'; 4 = 'file'; 5 = 'tool'
             6 = 'flux'; 7 = 'voice'; 8 = 'ltx'
-            9 = 'hermes'; 10 = 'n8n'; 11 = 'hermes'; 12 = 'n8n'
+            10 = 'n8n'; 12 = 'n8n'
         }
         foreach ($id in $sub.Keys) {
             $lines += "UPDATE items SET url='http://$($sub[$id]).localhost' WHERE id=$id;"
@@ -2547,7 +2393,7 @@ function Ensure-HeimdallTiles {
         $sub = [ordered]@{
             1 = 'chat'; 2 = 'movie'; 3 = 'music'; 4 = 'file'; 5 = 'tool'
             6 = 'flux'; 7 = 'voice'; 8 = 'ltx'
-            9 = 'hermes'; 10 = 'n8n'; 11 = 'hermes'; 12 = 'n8n'
+            10 = 'n8n'; 12 = 'n8n'
         }
         foreach ($id in $sub.Keys) {
             $lines += "UPDATE items SET url='https://$($sub[$id]).$TileDomain' WHERE id=$id;"
@@ -2580,13 +2426,10 @@ function Ensure-EnvSecrets {
         @{ Key='POSTGRES_PASSWORD';              Bytes=24; Mode='hex' }
         @{ Key='N8N_ENCRYPTION_KEY';             Bytes=32; Mode='hex' }
         @{ Key='N8N_USER_MANAGEMENT_JWT_SECRET'; Bytes=32; Mode='hex' }
-        @{ Key='HERMES_API_KEY';                 Bytes=32; Mode='hex' }
-        @{ Key='HERMES_DASHBOARD_TOKEN';         Bytes=32; Mode='hex' }
         @{ Key='NEXTAUTH_SECRET';                Bytes=32; Mode='b64' }
         @{ Key='LINKWARDEN_DB_PASSWORD';         Bytes=20; Mode='hex' }
         @{ Key='DB_PASSWORD';                    Bytes=20; Mode='hex' }
         @{ Key='TOR_VNC_PW';                     Bytes=12; Mode='hex' }
-        @{ Key='HERMES_WORKSPACE_PASSWORD';      Bytes=12; Mode='hex' }
         @{ Key='SONARR_API_KEY';                 Bytes=16; Mode='hex' }
         @{ Key='RADARR_API_KEY';                 Bytes=16; Mode='hex' }
         @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
@@ -2774,7 +2617,7 @@ function Wait-Ollama {
 # Apple Silicon path), make sure the host-installed `ollama` CLI exists and
 # the server is responding on http://127.0.0.1:11434 BEFORE we compose-up.
 # Without this, Start-Stack succeeds (the overlay disables the in-container
-# ollama) but Open WebUI / Local Deep Research / Vane / Hermes all try to
+# ollama) but Open WebUI / Local Deep Research / Vane all try to
 # reach host.docker.internal:11434 and find nothing, and the auto-pull step
 # in Install-FirstLlm later fails too.
 #
@@ -2823,7 +2666,7 @@ function Ensure-NativeOllamaInstalled {
         if ($LASTEXITCODE -ne 0) {
             Err 'brew install ollama failed - see output above.'
             Dim '  Skipping native install. The stack will still come up, but Open'
-            Dim '  WebUI / Hermes / Vane / LDR will have no LLM backend until you'
+            Dim '  WebUI / Vane / LDR will have no LLM backend until you'
             Dim '  install ollama manually.'
             return
         }
@@ -3067,11 +2910,9 @@ function Show-Summary {
         G '    SearXNG (search)        http://search.localhost'
         G '    Local Deep Research     http://research.localhost'
         G '    Vane                    http://vane.localhost'
-        G '    Hermes Workspace        http://hermes.localhost'
         G '    n8n (workflows)         http://n8n.localhost'
         G '    Qdrant (vector DB)      http://qdrant.localhost'
         Dim '    Ollama API (direct)     http://localhost:11434  (API-only, no UI)'
-        Dim '    Hermes Gateway (direct) http://localhost:8642   (API-only, no UI)'
     }
     if ($Result.UseTunnel -and $Result.Env['DOMAIN']) {
         $d = $Result.Env['DOMAIN']
@@ -3088,7 +2929,6 @@ function Show-Summary {
             G "    Open WebUI https://chat.$d"
             G "    SearXNG    https://search.$d"
             G "    n8n        https://n8n.$d"
-            G "    Hermes     https://hermes.$d"
         }
         G ''
         Dim '  ============================================================'
@@ -3127,7 +2967,6 @@ function Show-Summary {
             Dim "    chat.$d        ->  HTTP  caddy:80   Open WebUI"
             Dim "    search.$d      ->  HTTP  caddy:80   SearXNG"
             Dim "    n8n.$d         ->  HTTP  caddy:80   n8n workflows"
-            Dim "    hermes.$d      ->  HTTP  caddy:80   Hermes Workspace"
             Dim "    vane.$d        ->  HTTP  caddy:80   Vane AI engine"
             Dim "    research.$d    ->  HTTP  caddy:80   Local Deep Research"
             Dim "    qdrant.$d      ->  HTTP  caddy:80   Qdrant vector DB"
@@ -3297,7 +3136,7 @@ if ($StartOnly) {
     $useTunnel = [bool]$stateBlob.useTunnel
     $gpuMode   = [string]$stateBlob.gpuMode
     if ($customSvc -and $customSvc.Count -gt 0) {
-        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','hermes-agent','hermes-dashboard','hermes-workspace','n8n','n8n-postgres','qdrant' }).Count -gt 0
+        $hasAi    = ($customSvc | Where-Object { $_ -in 'ollama','open-webui','searxng','local-deep-research','vane','n8n','n8n-postgres','qdrant' }).Count -gt 0
         $hasMedia = ($customSvc | Where-Object { $_ -in 'jellyfin','navidrome','immich-server','immich-machine-learning','immich-redis','immich-postgres','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent' }).Count -gt 0
     } else {
         $hasAi    = $profiles -contains 'ai'
@@ -3305,7 +3144,7 @@ if ($StartOnly) {
     }
 
     # In native mode the host needs ollama on :11434 BEFORE compose comes
-    # up - otherwise Open WebUI / Hermes / LDR / Vane all start with their
+    # up - otherwise Open WebUI / LDR / Vane all start with their
     # OLLAMA_BASE_URL pointing at host.docker.internal:11434 and find nothing.
     Ensure-NativeOllamaInstalled -GpuMode $gpuMode
 
@@ -3317,8 +3156,6 @@ if ($StartOnly) {
 
     # 9. Once containers are up, wire the *arr stack via REST APIs.
     if ($hasMedia) { Configure-MediaStack -EnvMap $envMap }
-    # 10. If AI stack includes Hermes, point its agent at the in-stack Ollama.
-    if ($hasAi) { Configure-HermesAgent -EnvMap $envMap }
 
     Show-Summary -Result ([pscustomobject]@{
         Env       = $envMap
@@ -3369,7 +3206,7 @@ Write-State -State $stateBlob
 
 if (-not $NoStart) {
     # If the user picked NATIVE in Step 3b on Mac, install + start the host
-    # ollama before compose-up so the AI services (open-webui, hermes-agent,
+    # ollama before compose-up so the AI services (open-webui,
     # local-deep-research, vane) can reach host.docker.internal:11434 from
     # inside their containers as soon as they boot.
     Ensure-NativeOllamaInstalled -GpuMode $result.GpuMode
@@ -3385,10 +3222,6 @@ if (-not $NoStart -and $result.HasAi) {
 
 if (-not $NoStart -and $result.HasMedia) {
     Configure-MediaStack -EnvMap $result.Env
-}
-
-if (-not $NoStart -and $result.HasAi) {
-    Configure-HermesAgent -EnvMap $result.Env
 }
 
 Show-Summary -Result $result

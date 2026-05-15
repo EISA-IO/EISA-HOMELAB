@@ -133,11 +133,6 @@ http://chat.${DOMAIN} {
 	reverse_proxy host.docker.internal:9002
 }
 
-http://hermes.${DOMAIN} {
-	import forward_auth
-	reverse_proxy hermes-workspace:3000
-}
-
 http://n8n.${DOMAIN} {
 	import forward_auth
 	reverse_proxy host.docker.internal:5678

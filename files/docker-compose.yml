@@ -481,119 +481,6 @@ services:
     profiles: [media, media-stream]
 
   # ========================
-  # HERMES AGENT - "the agent that grows with you" (NousResearch/hermes-agent)
-  # Self-improving AI agent with built-in skill creation, persistent memory,
-  # and an HTTP gateway / dashboard that the workspace UI talks to. Default
-  # LLM endpoint points at the Ollama container running OmniCoder 2.
-  #
-  # The image's default command is an interactive TUI - we explicitly run
-  # `gateway run` and `dashboard ...` instead so the services are headless.
-  # ========================
-  hermes-agent:
-    image: nousresearch/hermes-agent:sha-9ed751b96706ffd343ae26531cd0e2152a1c7036
-    container_name: hermes-agent
-    env_file: .env
-    command: ["gateway", "run"]
-    environment:
-      API_SERVER_ENABLED: 'true'
-      API_SERVER_HOST: '0.0.0.0'
-      API_SERVER_PORT: '8642'
-      API_SERVER_KEY: ${HERMES_API_KEY}
-      # Point hermes at the in-stack Ollama. Ollama exposes an
-      # OpenAI-compatible API at /v1, so either set works for most clients.
-      OLLAMA_HOST: 'http://ollama:11434'
-      OLLAMA_BASE_URL: 'http://ollama:11434'
-      OPENAI_API_BASE: 'http://ollama:11434/v1'
-      OPENAI_BASE_URL: 'http://ollama:11434/v1'
-      OPENAI_API_KEY: 'ollama'
-      # Default model for new chats / agent runs. Override per-session in
-      # the workspace UI (Settings -> Model) if you want a different one.
-      HERMES_DEFAULT_MODEL: ${HERMES_DEFAULT_MODEL:-carstenuhlig/omnicoder-2-9b:q4_k_m}
-      HERMES_DEFAULT_CONTEXT: ${HERMES_DEFAULT_CONTEXT:-65536}
-      HERMES_UID: '1000'
-      HERMES_GID: '1000'
-    ports:
-      - "${HERMES_GATEWAY_PORT:-8642}:8642"
-    volumes:
-      - hermes_data:/opt/data
-    depends_on:
-      - ollama
-    restart: always
-    networks:
-      - caddy
-    profiles: [ai]
-
-  # Companion dashboard container (same image, different entrypoint command).
-  # Shares the hermes_data volume so it sees the gateway's sessions / skills.
-  # NOT published to the host: the dashboard exposes API keys + config and
-  # has no built-in auth. Only hermes-workspace reaches it on the internal
-  # docker network at http://hermes-dashboard:9119.
-  hermes-dashboard:
-    image: nousresearch/hermes-agent:sha-9ed751b96706ffd343ae26531cd0e2152a1c7036
-    container_name: hermes-dashboard
-    env_file: .env
-    command: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open", "--insecure"]
-    environment:
-      HERMES_UID: '1000'
-      HERMES_GID: '1000'
-    expose:
-      - "9119"
-    volumes:
-      - hermes_data:/opt/data
-    depends_on:
-      - hermes-agent
-    restart: always
-    networks:
-      - caddy
-    profiles: [ai]
-
-  # ========================
-  # HERMES WORKSPACE - web UI for orchestrating hermes-agent
-  # (outsourc-e/hermes-workspace) Chat, memory browser, skill manager,
-  # terminal, multi-agent swarm view. Talks to hermes-agent via the docker
-  # network.
-  #
-  # Auth: HERMES_PASSWORD is intentionally unset, and HERMES_ALLOW_INSECURE_REMOTE=1
-  # bypasses upstream's fail-closed bind guard so the workspace starts on
-  # 0.0.0.0:3000 without showing a login form. LAN trust is assumed —
-  # in tunnel mode this service sits behind Caddy + Authelia, which is
-  # the actual auth gate. Don't expose port 3030 to the public internet
-  # directly without putting an auth proxy in front.
-  # ========================
-  hermes-workspace:
-    # hermes-workspace doesn't publish semver tags on ghcr (only `main` + SHA
-    # digests). Pin by content-addressed digest so it can't silently roll forward.
-    image: ghcr.io/outsourc-e/hermes-workspace@sha256:2d2ba9aa5b1230766267322817e8e51113541780a5797802a582a47cc34a3df3
-    container_name: hermes-workspace
-    env_file: .env
-    environment:
-      HERMES_API_URL: 'http://hermes-agent:8642'
-      HERMES_DASHBOARD_URL: 'http://hermes-dashboard:9119'
-      HERMES_API_TOKEN: ${HERMES_API_KEY}
-      # Bypass the upstream fail-closed guard. Workspace starts on 0.0.0.0
-      # with no login form. Auth is delegated to Caddy/Authelia in tunnel mode.
-      HERMES_ALLOW_INSECURE_REMOTE: '1'
-      # Plain HTTP over LAN: don't insist on Secure cookies.
-      COOKIE_SECURE: '0'
-      # We sit behind Caddy in tunnel mode.
-      TRUST_PROXY: '1'
-      # The image runs as uid=10010 but doesn't ship a writable /home/workspace.
-      # Any settings PATCH from the UI calls mkdirSync('$HOME/.hermes') and
-      # crashes with EACCES. Point HOME at /tmp (world-writable) — the workspace
-      # picks up its config from env vars (HERMES_API_URL/TOKEN, etc.) so
-      # there's nothing critical to persist across container restarts.
-      HOME: '/tmp'
-    ports:
-      - "${HERMES_WORKSPACE_PORT:-3030}:3000"
-    depends_on:
-      - hermes-agent
-      - hermes-dashboard
-    restart: always
-    networks:
-      - caddy
-    profiles: [ai]
-
-  # ========================
   # REQUEST + DOWNLOAD STACK ("*arr") - Seerr asks, *arr resolves.
   #
   # Flow: user requests a movie/show in Seerr -> Seerr posts the request
@@ -746,7 +633,6 @@ volumes:
   ldr_scripts:
   immich_model_cache:
   vane_data:
-  hermes_data:
 
 networks:
   caddy:
