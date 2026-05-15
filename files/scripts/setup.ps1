@@ -2682,6 +2682,21 @@ function Start-Stack {
         [string[]]$CustomServices = @()
     )
 
+    # The media-stream and media-request profiles are conceptually distinct
+    # in the Step 1 picker but operationally inseparable: Seerr requests
+    # land in Jellyfin's library, Sonarr/Radarr import into Jellyfin's
+    # paths, and the wizard's Step 6 configurator waits on Sonarr/Radarr/
+    # Prowlarr/qBittorrent regardless of which media profile was picked.
+    # So if the user has either one, expand to include both — otherwise
+    # picking just "MEDIA STREAMING STACK" starts jellyfin/navidrome/immich
+    # but then hangs forever on "Waiting for Sonarr to come up..."
+    if ($Profiles -contains 'media-stream' -and $Profiles -notcontains 'media-request') {
+        $Profiles = @($Profiles) + 'media-request'
+    }
+    if ($Profiles -contains 'media-request' -and $Profiles -notcontains 'media-stream') {
+        $Profiles = @($Profiles) + 'media-stream'
+    }
+
     # `--progress plain` forces line-by-line output instead of compose v2's
     # default TTY redraw renderer. When the wizard is launched from the
     # macOS .command launcher (or the Windows .bat one) compose's in-place
