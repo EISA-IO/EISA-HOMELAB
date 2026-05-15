@@ -646,24 +646,43 @@ function Format-Path {
     return $p -replace '\\', '/'
 }
 
-# Migrate the 5 media-path keys from the old F:\ defaults to the new
-# C:/MEDIA/ defaults. Only rewrites values that EXACTLY match the old
-# defaults so a user-customised path is never clobbered. Returns the
-# list of keys that were migrated. Idempotent — safe to call repeatedly.
+# Migrate the 5 media-path keys to the current per-OS defaults:
+#   Windows/Linux: C:/MEDIA/{Movies,TV-Shows,Music,Downloads,Photos}
+#   macOS:         $HOME/Documents/{Movies,TV-Shows,Music,Downloads,Photos}
+# Only rewrites values that EXACTLY match a known LEGACY default so a
+# user-customised path is never clobbered. Each platform considers the
+# OTHER platform's known defaults as legacy too — that way a user who
+# copies an old .env between Mac and Windows still gets migrated. The
+# function relies on $script:OS being set by the main flow before any
+# branch invokes it. Returns the list of keys that were migrated.
 function Migrate-LegacyMediaDefaults {
     param($EnvMap)
-    $oldToNew = [ordered]@{
-        'MOVIES_PATH'    = @{ Old = 'F:/Movies';    New = 'C:/MEDIA/Movies'    }
-        'TV_SHOWS_PATH'  = @{ Old = 'F:/TV-Shows';  New = 'C:/MEDIA/TV-Shows'  }
-        'MUSIC_PATH'     = @{ Old = 'F:/Music';     New = 'C:/MEDIA/Music'     }
-        'DOWNLOADS_PATH' = @{ Old = 'F:/Downloads'; New = 'C:/MEDIA/Downloads' }
-        'PHOTOS_PATH'    = @{ Old = 'F:/Photos';    New = 'C:/MEDIA/Photos'    }
+    $h = $HOME
+    $folders = @('Movies','TV-Shows','Music','Downloads','Photos')
+    $keys    = @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH','PHOTOS_PATH')
+
+    if ($script:OS -eq 'Mac') {
+        $newPrefix     = "$h/Documents"
+        $legacyPrefixes = @($h, "$h/Documents", 'C:/MEDIA', 'F:')
+    } else {
+        $newPrefix     = 'C:/MEDIA'
+        $legacyPrefixes = @('C:/MEDIA', 'F:', "$h/Documents", $h)
     }
+
     $migrated = @()
-    foreach ($k in $oldToNew.Keys) {
-        if ($EnvMap.Contains($k) -and $EnvMap[$k] -eq $oldToNew[$k].Old) {
-            $EnvMap[$k] = $oldToNew[$k].New
-            $migrated += $k
+    for ($i = 0; $i -lt $keys.Count; $i++) {
+        $k = $keys[$i]
+        $f = $folders[$i]
+        if (-not $EnvMap.Contains($k)) { continue }
+        $current = $EnvMap[$k]
+        $new     = "$newPrefix/$f"
+        if ($current -eq $new) { continue }   # already on the new default
+        foreach ($p in $legacyPrefixes) {
+            if ($current -eq "$p/$f") {
+                $EnvMap[$k] = $new
+                $migrated += $k
+                break
+            }
         }
     }
     return $migrated
@@ -1046,26 +1065,27 @@ function Invoke-Wizard {
     # ---- Step 4: media folders (only if media stack) ---------------------
     if ($hasMedia) {
         if ($script:OS -eq 'Mac') {
-            $pathHint = 'Type the full path to each folder. Examples: ~/Movies, /Volumes/Media/Movies'
+            $pathHint = 'Type the full path to each folder. Examples: ~/Documents/Movies, /Volumes/Media/Movies'
             # If the defaults still look Windows-y, swap to sensible Mac defaults.
             $homePath = $HOME
             foreach ($k in @('MOVIES_PATH','TV_SHOWS_PATH','MUSIC_PATH','DOWNLOADS_PATH','PHOTOS_PATH')) {
                 if (-not $envMap.Contains($k) -or $envMap[$k] -match '^[A-Za-z]:') {
                     $envMap[$k] = switch ($k) {
-                        'MOVIES_PATH'    { "$homePath/Movies" }
-                        'TV_SHOWS_PATH'  { "$homePath/TV-Shows" }
-                        'MUSIC_PATH'     { "$homePath/Music" }
-                        'DOWNLOADS_PATH' { "$homePath/Downloads" }
-                        'PHOTOS_PATH'    { "$homePath/Photos" }
+                        'MOVIES_PATH'    { "$homePath/Documents/Movies" }
+                        'TV_SHOWS_PATH'  { "$homePath/Documents/TV-Shows" }
+                        'MUSIC_PATH'     { "$homePath/Documents/Music" }
+                        'DOWNLOADS_PATH' { "$homePath/Documents/Downloads" }
+                        'PHOTOS_PATH'    { "$homePath/Documents/Photos" }
                     }
                 }
             }
         } else {
             $pathHint = 'Type the full path to each folder. Examples: C:\MEDIA\Movies, D:\TV-Shows, C:/MEDIA/Music'
         }
-        # Migrate any leftover legacy F:\ defaults from older installs to the
-        # new C:/MEDIA/ defaults. Only touches values that EXACTLY match the
-        # old defaults — never a custom path the user typed in themselves.
+        # Migrate any leftover legacy defaults from older installs to the
+        # current per-OS defaults (Windows: C:/MEDIA/, Mac: ~/Documents/).
+        # Only touches values that EXACTLY match an old default — never a
+        # custom path the user typed in themselves.
         [void](Migrate-LegacyMediaDefaults $envMap)
         if (-not $envMap.Contains('PHOTOS_PATH') -or [string]::IsNullOrWhiteSpace($envMap['PHOTOS_PATH'])) {
             $envMap['PHOTOS_PATH'] = 'C:/MEDIA/Photos'
