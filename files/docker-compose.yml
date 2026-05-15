@@ -577,6 +577,12 @@ services:
       COOKIE_SECURE: '0'
       # We sit behind Caddy in tunnel mode.
       TRUST_PROXY: '1'
+      # The image runs as uid=10010 but doesn't ship a writable /home/workspace.
+      # Any settings PATCH from the UI calls mkdirSync('$HOME/.hermes') and
+      # crashes with EACCES. Point HOME at /tmp (world-writable) — the workspace
+      # picks up its config from env vars (HERMES_API_URL/TOKEN, etc.) so
+      # there's nothing critical to persist across container restarts.
+      HOME: '/tmp'
     ports:
       - "${HERMES_WORKSPACE_PORT:-3030}:3000"
     depends_on:
@@ -633,7 +639,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media, media-stream]
+    profiles: [media, media-request]
 
   # Prowlarr - central indexer manager. Adds an indexer ONCE here, syncs
   # it to Sonarr + Radarr automatically. Pre-seeded with public/no-signup
@@ -653,7 +659,7 @@ services:
     restart: always
     networks:
       - caddy
-    profiles: [media, media-stream]
+    profiles: [media, media-request]
 
   # Sonarr - TV show automation. Watches Prowlarr indexers for releases
   # matching its monitored shows, hands magnet links to qBittorrent,
@@ -678,7 +684,7 @@ services:
       - prowlarr
     networks:
       - caddy
-    profiles: [media, media-stream]
+    profiles: [media, media-request]
 
   # Radarr - movie automation. Same role as Sonarr but for films.
   radarr:
@@ -701,7 +707,7 @@ services:
       - prowlarr
     networks:
       - caddy
-    profiles: [media, media-stream]
+    profiles: [media, media-request]
 
   # Seerr - the user-facing request UI. Talks to Jellyfin (already in
   # the stack) for library state, Sonarr + Radarr for new requests.
@@ -727,7 +733,7 @@ services:
       - radarr
     networks:
       - caddy
-    profiles: [media, media-stream]
+    profiles: [media, media-request]
 
 volumes:
   ollama:

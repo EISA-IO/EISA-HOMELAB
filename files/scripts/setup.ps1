@@ -148,6 +148,66 @@ function Open-Browser {
     } catch {}
 }
 
+# ---------------------------------------------------------------------------
+# Add-DesktopShortcut: drops a one-click "Start EISA Homelab" launcher on the
+# user's Desktop. Windows shortcut points at the repo's start.bat (.lnk via
+# WScript.Shell COM); macOS copies start.command to ~/Desktop and marks it
+# executable. Idempotent.
+# ---------------------------------------------------------------------------
+function Add-DesktopShortcut {
+    # ProjectRoot = .../files, start.* lives one level up at the repo root.
+    $repoRoot = Split-Path $ProjectRoot -Parent
+    if ($script:OS -eq 'Windows') {
+        $target = Join-Path $repoRoot 'start.bat'
+        if (-not (Test-Path $target)) {
+            Dim "  start.bat not found at $target — skipping desktop shortcut."
+            return
+        }
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        if (-not $desktop -or -not (Test-Path $desktop)) {
+            Dim '  Could not resolve Desktop folder — skipping shortcut.'
+            return
+        }
+        $lnk = Join-Path $desktop 'EISA Homelab.lnk'
+        try {
+            $sh = New-Object -ComObject WScript.Shell
+            $s  = $sh.CreateShortcut($lnk)
+            $s.TargetPath       = $target
+            $s.WorkingDirectory = $repoRoot
+            # Use cmd.exe's icon — start.bat itself has none, the shell would
+            # otherwise show a blank icon. Keeps it recognisable on Desktop.
+            $s.IconLocation     = "$env:SystemRoot\System32\cmd.exe,0"
+            $s.Description      = 'Start EISA Homelab (Docker + stack + Heimdall)'
+            $s.Save()
+            Ok "Desktop shortcut created: $lnk"
+        } catch {
+            Dim "  Could not create desktop shortcut: $($_.Exception.Message)"
+        }
+    } elseif ($script:OS -eq 'Mac') {
+        $target = Join-Path $repoRoot 'start.command'
+        if (-not (Test-Path $target)) {
+            Dim "  start.command not found at $target — skipping desktop launcher."
+            return
+        }
+        $desktop = Join-Path $HOME 'Desktop'
+        if (-not (Test-Path $desktop)) {
+            Dim '  ~/Desktop missing — skipping launcher.'
+            return
+        }
+        $alias = Join-Path $desktop 'EISA Homelab.command'
+        try {
+            Copy-Item $target $alias -Force
+            # Mac Finder won't double-click-launch a .command file without +x.
+            & chmod +x $alias 2>$null | Out-Null
+            Ok "Desktop launcher created: $alias"
+        } catch {
+            Dim "  Could not create desktop launcher: $($_.Exception.Message)"
+        }
+    } else {
+        Dim '  Desktop shortcut creation is only implemented for Windows + macOS.'
+    }
+}
+
 function Ask-YesNo {
     param([string]$Prompt, [bool]$DefaultYes = $true)
     $def = if ($DefaultYes) { 'Y/n' } else { 'y/N' }
@@ -199,16 +259,16 @@ function Get-StackEntries {
         [pscustomobject]@{ Bundle='ai'; Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
         [pscustomobject]@{ Bundle='ai'; Label='hermes               (NousResearch self-improving agent + workspace UI)'; Services=@('hermes-agent','hermes-dashboard','hermes-workspace') }
         [pscustomobject]@{ Bundle='ai'; Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
-        # MEDIA — streaming
-        [pscustomobject]@{ Bundle='media-stream'; Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
-        [pscustomobject]@{ Bundle='media-stream'; Label='navidrome            (music streaming)';                         Services=@('navidrome') }
-        [pscustomobject]@{ Bundle='media-stream'; Label='immich               (photo + video library; bundles DB/Redis/ML)'; Services=@('immich-server','immich-machine-learning','immich-redis','immich-postgres') }
-        # MEDIA — request + download stack
-        [pscustomobject]@{ Bundle='media-stream'; Label='seerr                (request UI for movies/TV)';                 Services=@('seerr') }
-        [pscustomobject]@{ Bundle='media-stream'; Label='sonarr               (TV automation)';                            Services=@('sonarr') }
-        [pscustomobject]@{ Bundle='media-stream'; Label='radarr               (movie automation)';                         Services=@('radarr') }
-        [pscustomobject]@{ Bundle='media-stream'; Label='prowlarr             (indexer manager)';                          Services=@('prowlarr') }
-        [pscustomobject]@{ Bundle='media-stream'; Label='qbittorrent          (torrent download client)';                  Services=@('qbittorrent') }
+        # MEDIA STREAMING — what your friends/family will actually watch
+        [pscustomobject]@{ Bundle='media-streaming'; Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
+        [pscustomobject]@{ Bundle='media-streaming'; Label='navidrome            (music streaming)';                         Services=@('navidrome') }
+        [pscustomobject]@{ Bundle='media-streaming'; Label='immich               (photo + video library; bundles DB/Redis/ML)'; Services=@('immich-server','immich-machine-learning','immich-redis','immich-postgres') }
+        # MEDIA REQUEST — request UI + sonarr/radarr + indexer + torrent client
+        [pscustomobject]@{ Bundle='media-request';   Label='seerr                (request UI for movies/TV)';                 Services=@('seerr') }
+        [pscustomobject]@{ Bundle='media-request';   Label='sonarr               (TV automation)';                            Services=@('sonarr') }
+        [pscustomobject]@{ Bundle='media-request';   Label='radarr               (movie automation)';                         Services=@('radarr') }
+        [pscustomobject]@{ Bundle='media-request';   Label='prowlarr             (indexer manager)';                          Services=@('prowlarr') }
+        [pscustomobject]@{ Bundle='media-request';   Label='qbittorrent          (torrent download client)';                  Services=@('qbittorrent') }
         # PRODUCTIVITY
         [pscustomobject]@{ Bundle='productivity'; Label='filebrowser          (web file manager)';                        Services=@('filebrowser') }
         [pscustomobject]@{ Bundle='productivity'; Label='omni-tools           (grab-bag of web utilities)';                Services=@('omni-tools') }
@@ -225,10 +285,11 @@ function Invoke-StackTrimmer {
 
     $all = Get-StackEntries
     $entries = switch ($Stack) {
-        'ai'           { $all | Where-Object { $_.Bundle -eq 'ai' } }
-        'media'        { $all | Where-Object { $_.Bundle -eq 'media-stream' } }
-        'productivity' { $all | Where-Object { $_.Bundle -eq 'productivity' } }
-        'ultimate'     { $all }
+        'ai'              { $all | Where-Object { $_.Bundle -eq 'ai' } }
+        'media-streaming' { $all | Where-Object { $_.Bundle -eq 'media-streaming' } }
+        'media-request'   { $all | Where-Object { $_.Bundle -eq 'media-request' } }
+        'productivity'    { $all | Where-Object { $_.Bundle -eq 'productivity' } }
+        'ultimate'        { $all }
     }
     $entries = @($entries)
     if ($entries.Count -eq 0) { return $null }
@@ -274,19 +335,20 @@ function Invoke-CustomServicePicker {
     $entries = @(Get-StackEntries)
     # Pre-compute the index ranges for the "ai" / "media" / "prod" shortcuts
     # so they keep working as the bundle membership of new apps changes.
-    $aiIdx   = @(); $mediaIdx = @(); $prodIdx = @()
+    $aiIdx = @(); $streamIdx = @(); $requestIdx = @(); $prodIdx = @()
     for ($i = 0; $i -lt $entries.Count; $i++) {
         switch ($entries[$i].Bundle) {
-            'ai'           { $aiIdx    += ($i + 1) }
-            'media-stream' { $mediaIdx += ($i + 1) }
-            'productivity' { $prodIdx  += ($i + 1) }
+            'ai'              { $aiIdx      += ($i + 1) }
+            'media-streaming' { $streamIdx  += ($i + 1) }
+            'media-request'   { $requestIdx += ($i + 1) }
+            'productivity'    { $prodIdx    += ($i + 1) }
         }
     }
 
     G ''
     G  '  CUSTOM stack - pick the apps you want.'
-    Dim '  Type comma- or space-separated numbers (e.g. "1,3,7" or "1 3 7"),'
-    Dim '  "all" to pick everything, or "ai" / "media" / "prod" for shortcut bundles.'
+    Dim '  Type comma- or space-separated numbers (e.g. "1,3,7" or "1 3 7"), "all" to'
+    Dim '  pick everything, or one of: ai / streaming / request / media / prod.'
     G ''
     for ($i = 0; $i -lt $entries.Count; $i++) {
         G ("    [{0}] {1}" -f ($i + 1), $entries[$i].Label)
@@ -302,8 +364,12 @@ function Invoke-CustomServicePicker {
         $picked = 1..$entries.Count
     } elseif ($lower -eq 'ai') {
         $picked = $aiIdx
+    } elseif ($lower -in @('streaming','media-streaming','stream')) {
+        $picked = $streamIdx
+    } elseif ($lower -in @('request','media-request','arr')) {
+        $picked = $requestIdx
     } elseif ($lower -eq 'media') {
-        $picked = $mediaIdx
+        $picked = @($streamIdx) + @($requestIdx)
     } elseif ($lower -in @('prod','productivity')) {
         $picked = $prodIdx
     } else {
@@ -631,11 +697,21 @@ function Invoke-Wizard {
             )
         }
         [pscustomobject]@{
-            Label = 'MEDIA (streaming only)'
+            Label = 'MEDIA STREAMING STACK'
             Hint  = @(
                 'jellyfin            movie + TV streaming'
                 'navidrome           music streaming'
                 'immich              photo + video library'
+            )
+        }
+        [pscustomobject]@{
+            Label = 'MEDIA REQUEST STACK'
+            Hint  = @(
+                'seerr               request UI for movies/TV'
+                'sonarr              TV automation'
+                'radarr              movie automation'
+                'prowlarr            indexer manager'
+                'qbittorrent         torrent download client'
             )
         }
         [pscustomobject]@{
@@ -649,7 +725,7 @@ function Invoke-Wizard {
         [pscustomobject]@{
             Label = 'ULTIMATE (everything - recommended)'
             Hint  = @(
-                'Everything from AI + MEDIA + PRODUCTIVITY.'
+                'Everything from AI + MEDIA STREAMING + MEDIA REQUEST + PRODUCTIVITY.'
             )
         }
         [pscustomobject]@{
@@ -665,17 +741,19 @@ function Invoke-Wizard {
     $profiles       = @()
     $stack          = switch ($stackPick) {
         1 { 'ai' }
-        2 { 'media' }
-        3 { 'productivity' }
-        4 { 'ultimate' }
-        5 { 'custom' }
+        2 { 'media-streaming' }
+        3 { 'media-request' }
+        4 { 'productivity' }
+        5 { 'ultimate' }
+        6 { 'custom' }
     }
     switch ($stack) {
-        'ai'           { $profiles = @('ai') }
-        'media'        { $profiles = @('media-stream') }
-        'productivity' { $profiles = @('productivity') }
-        'ultimate'     { $profiles = @('ai','media') }
-        'custom'       {
+        'ai'              { $profiles = @('ai') }
+        'media-streaming' { $profiles = @('media-stream') }
+        'media-request'   { $profiles = @('media-request') }
+        'productivity'    { $profiles = @('productivity') }
+        'ultimate'        { $profiles = @('ai','media') }
+        'custom'          {
             $customServices = Invoke-CustomServicePicker
             if (-not $customServices -or $customServices.Count -eq 0) {
                 Dim '  No apps picked - defaulting to ULTIMATE.'
@@ -692,7 +770,7 @@ function Invoke-Wizard {
     # ULTIMATE), the trimmer returns the kept-services list and we switch
     # to customServices mode so Start-Stack lists them positionally instead
     # of activating a profile (profiles are all-or-nothing).
-    if ($stack -in @('ai','media','productivity','ultimate')) {
+    if ($stack -in @('ai','media-streaming','media-request','productivity','ultimate')) {
         $kept = Invoke-StackTrimmer -Stack $stack
         if ($kept) {
             $customServices = $kept
@@ -705,7 +783,7 @@ function Invoke-Wizard {
     $mediaServices = @('jellyfin','navidrome','immich-server','immich-machine-learning','immich-redis','immich-postgres','filebrowser','omni-tools','tor-browser','seerr','sonarr','radarr','prowlarr','qbittorrent')
     $hasAi    = ($profiles -contains 'ai') -or `
                 ($customServices | Where-Object { $_ -in $aiServices }).Count -gt 0
-    $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'productivity') -or `
+    $hasMedia = ($profiles -contains 'media') -or ($profiles -contains 'media-stream') -or ($profiles -contains 'media-request') -or ($profiles -contains 'productivity') -or `
                 ($customServices | Where-Object { $_ -in $mediaServices }).Count -gt 0
     Ok "Stack: $($stack.ToUpper())$(if ($customServices.Count -gt 0) { " (trimmed to $($customServices.Count) services)" })"
 
@@ -2102,6 +2180,148 @@ function Configure-SeerrServers {
 # - Skips writing a file if the user has already started the app (config
 #   exists with a different API key) — preserves their customisations.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Configure-HermesAgent: points the hermes-agent container at the in-stack
+# Ollama instead of its default (OpenRouter + claude-opus-4.6, which 401s
+# without an account). Without this, hermes-workspace shows:
+#   "Authentication required - Hermes Agent rejected the connection token"
+# even though the workspace and agent tokens match — the underlying agent
+# is in error mode because its upstream LLM provider rejects requests.
+#
+# Strategy: overwrite /opt/data/config.yaml inside the hermes-agent
+# container with our Ollama settings, then restart hermes-agent and
+# hermes-workspace so the workspace reconnects. Idempotent: skips if the
+# file already points at http://ollama.
+# ---------------------------------------------------------------------------
+function Configure-HermesAgent {
+    param($EnvMap)
+    $running = (docker ps --filter 'name=^hermes-agent$' --format '{{.Names}}') 2>&1
+    if ($running -ne 'hermes-agent') {
+        Dim '  Hermes agent not running — skipping Ollama wiring.'
+        return
+    }
+
+    $model   = [string]$EnvMap['HERMES_DEFAULT_MODEL']
+    $context = [string]$EnvMap['HERMES_DEFAULT_CONTEXT']
+    if ([string]::IsNullOrWhiteSpace($model))   { $model   = 'carstenuhlig/omnicoder-2-9b:q4_k_m' }
+    if ([string]::IsNullOrWhiteSpace($context)) { $context = '65536' }
+
+    # Idempotent check on the AGENT's config: require BOTH the Ollama base_url
+    # AND the auxiliary block to be present. Older versions of this function
+    # wrote the base_url but not the auxiliary block, leaving the agent's
+    # secondary client trying OpenRouter on every turn — we want to upgrade
+    # those configs in place.
+    $agentConfigOk = $false
+    $current = (& docker exec hermes-agent cat /opt/data/config.yaml 2>&1) -join "`n"
+    if ($LASTEXITCODE -eq 0 -and `
+        $current -match 'http://ollama:11434' -and `
+        $current -match '(?ms)^auxiliary:' -and `
+        $current -match 'provider:\s*"main"') {
+        $agentConfigOk = $true
+        Dim '  Hermes agent already configured (Ollama + auxiliary=main).'
+    }
+    # Always (re-)seed the WORKSPACE side. Its config lives at /tmp/.hermes/
+    # which is wiped on every container recreate, so re-running on a clean
+    # boot is normal — keep it cheap and unconditional.
+    Set-HermesWorkspaceConfig -Model $model
+    if ($agentConfigOk) { return }
+
+    # config.yaml. provider: "custom" because the bare alias "ollama" maps
+    # to "custom" in hermes' provider table (see providers.py), which then
+    # reads base_url from this file. api_mode chat_completions so the
+    # agent talks to Ollama via its OpenAI-compatible /v1 endpoint.
+    $cfg = @"
+# Auto-generated by setup.ps1. Points Hermes Agent at the in-stack Ollama
+# (carstenuhlig/omnicoder-2-9b by default). Override the model per session
+# in the Hermes Workspace UI (Settings -> Model) — anything you have pulled
+# in Ollama works (e.g. huihui_ai/gemma-4-abliterated:e4b-q4_K).
+
+model:
+  default: "$model"
+  provider: "custom"
+  base_url: "http://ollama:11434/v1"
+  api_key: "ollama"
+  api_mode: "chat_completions"
+  context_length: $context
+
+# Force every auxiliary task (compression, summarization, vision, web extract,
+# session search) to use the SAME endpoint as the main turn client — i.e.
+# our Ollama. Without this the auxiliary client auto-detects providers
+# starting at OpenRouter, hits 401 (no OPENROUTER_API_KEY), and spams
+# "AuthenticationError" warnings on every turn even when the main chat
+# works. "main" tells Hermes to mirror the model.* block above.
+auxiliary:
+  vision:
+    provider: "main"
+    model: ""
+  web_extract:
+    provider: "main"
+    model: ""
+  session_search:
+    provider: "main"
+    model: ""
+  compression:
+    provider: "main"
+    model: ""
+"@
+    $cfg = $cfg -replace "`r`n", "`n"
+    $tmpPath = Join-Path ([System.IO.Path]::GetTempPath()) ("hermes-config-" + [Guid]::NewGuid().ToString('N') + '.yaml')
+    [System.IO.File]::WriteAllText($tmpPath, $cfg, [System.Text.UTF8Encoding]::new($false))
+    try {
+        & docker cp $tmpPath hermes-agent:/opt/data/config.yaml | Out-Null
+        # config.yaml writes from the agent run as PUID/PGID 1000 — match.
+        & docker exec --user 0 hermes-agent chown 1000:1000 /opt/data/config.yaml | Out-Null
+        Ok "Hermes Agent config written (provider=custom, base_url=ollama:11434, default model=$model)."
+    } catch {
+        Err "  Hermes Agent config write failed: $($_.Exception.Message)"
+        Remove-Item $tmpPath -ErrorAction SilentlyContinue
+        return
+    }
+    Remove-Item $tmpPath -ErrorAction SilentlyContinue
+
+    Dim '  Restarting hermes-agent + hermes-workspace so they pick up the new config...'
+    & docker restart hermes-agent hermes-dashboard hermes-workspace 2>&1 | Out-Null
+    # Re-seed the workspace post-restart since the recreate wiped /tmp.
+    Set-HermesWorkspaceConfig -Model $model
+    Ok 'Hermes restarted — workspace should now show "connected" once the agent finishes booting.'
+}
+
+# ---------------------------------------------------------------------------
+# Set-HermesWorkspaceConfig: drops a tiny config.yaml inside the workspace
+# container so its /api/connection-status reports modelConfigured:true. Without
+# it the workspace greets the user with "Welcome! Let's connect your backend."
+# even though the agent + Ollama are wired correctly. /tmp is wiped on every
+# container recreate, so we re-seed every wizard run.
+# ---------------------------------------------------------------------------
+function Set-HermesWorkspaceConfig {
+    param([string]$Model)
+    $running = (docker ps --filter 'name=^hermes-workspace$' --format '{{.Names}}') 2>&1
+    if ($running -ne 'hermes-workspace') { return }
+    $wsBase = 'http://localhost:3030'
+    if (-not (Wait-Url -Url $wsBase -TimeoutSeconds 60)) {
+        Dim '  Workspace not reachable on :3030; skipping welcome-bypass seed.'
+        return
+    }
+    $wsCfg = @"
+# Auto-generated by setup.ps1. Tells Hermes Workspace which model is "active"
+# so /api/connection-status reports modelConfigured:true and the onboarding
+# welcome screen doesn't show. The actual agent<->Ollama wiring lives in the
+# hermes-agent container's own config.yaml — this is the workspace's shim.
+model:
+  default: "$Model"
+  provider: "custom"
+"@
+    $wsCfg = $wsCfg -replace "`r`n", "`n"
+    try {
+        $wsCfg | & docker exec -i hermes-workspace sh -c 'mkdir -p /tmp/.hermes && cat > /tmp/.hermes/config.yaml' 2>&1 | Out-Null
+        Ok 'Hermes Workspace pre-seeded — welcome screen bypassed on next visit.'
+    } catch {
+        Dim "  Workspace config seed failed: $($_.Exception.Message)"
+    }
+}
+
+# ---------------------------------------------------------------------------
 function Pre-Seed-MediaStack {
     param($EnvMap)
 
@@ -3097,6 +3317,8 @@ if ($StartOnly) {
 
     # 9. Once containers are up, wire the *arr stack via REST APIs.
     if ($hasMedia) { Configure-MediaStack -EnvMap $envMap }
+    # 10. If AI stack includes Hermes, point its agent at the in-stack Ollama.
+    if ($hasAi) { Configure-HermesAgent -EnvMap $envMap }
 
     Show-Summary -Result ([pscustomobject]@{
         Env       = $envMap
@@ -3165,4 +3387,32 @@ if (-not $NoStart -and $result.HasMedia) {
     Configure-MediaStack -EnvMap $result.Env
 }
 
+if (-not $NoStart -and $result.HasAi) {
+    Configure-HermesAgent -EnvMap $result.Env
+}
+
 Show-Summary -Result $result
+
+# Post-wizard niceties. Only runs after the FULL first-run wizard
+# (not on -StartOnly), and only when the stack was actually brought up.
+if (-not $NoStart) {
+    G ''
+    Step 'Final touches' 'One-click access for next time.'
+    # 1. Auto-open Heimdall — works for both local-only (hub.localhost) and
+    #    tunnel mode (hub.<DOMAIN>); falls back to the direct port if Caddy
+    #    isn't part of the picked stack for some reason.
+    $heimdallUrl = if ($result.UseTunnel -and $result.Env['DOMAIN']) {
+        "https://hub.$($result.Env['DOMAIN'])"
+    } else {
+        'http://hub.localhost'
+    }
+    Dim "  Opening Heimdall at $heimdallUrl ..."
+    Open-Browser $heimdallUrl
+    # 2. Offer a Desktop shortcut for next time. Default = yes, since users
+    #    who don't want desktop clutter can just say n.
+    if ($script:OS -in @('Windows','Mac')) {
+        if (Ask-YesNo '  Create a Desktop shortcut that one-clicks the whole stack up?' $true) {
+            Add-DesktopShortcut
+        }
+    }
+}
