@@ -39,7 +39,22 @@ files/persistent-storage/navidrome/
 files/persistent-storage/portainer/
 files/persistent-storage/n8n/
 files/persistent-storage/immich/
-files/persistent-storage/do-not-delete/heimdall/
+files/persistent-storage/do-not-delete/heimdall/**
+# ...but ship the Heimdall dashboard seed (DB + uploaded icons + backgrounds)
+# so fresh installs get the pre-built tile layout. Logs / certs / nginx +
+# php runtime configs / sqlite auto-backups / heimdall's internal .env stay
+# ignored. The /** above + ancestor un-ignores is the only pattern git's
+# gitignore parser handles correctly here.
+!files/persistent-storage/do-not-delete/heimdall/
+!files/persistent-storage/do-not-delete/heimdall/config/
+!files/persistent-storage/do-not-delete/heimdall/config/www/
+!files/persistent-storage/do-not-delete/heimdall/config/www/app.sqlite
+!files/persistent-storage/do-not-delete/heimdall/config/www/backgrounds/
+!files/persistent-storage/do-not-delete/heimdall/config/www/backgrounds/**
+!files/persistent-storage/do-not-delete/heimdall/config/www/icons/
+!files/persistent-storage/do-not-delete/heimdall/config/www/icons/**
+# Re-ignore the sqlite auto-backups even though icons/backgrounds are un-ignored.
+files/persistent-storage/do-not-delete/heimdall/config/www/app.sqlite.bak.*
 files/persistent-storage/do-not-delete/filebrowser/filebrowser.db
 files/persistent-storage/do-not-delete/filebrowser/storage/
 files/persistent-storage/do-not-delete/tor/
