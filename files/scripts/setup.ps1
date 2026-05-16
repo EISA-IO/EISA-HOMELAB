@@ -236,6 +236,10 @@ function Ask-Choice {
                 $lines = if ($opt.Hint -is [array]) { $opt.Hint } else { @($opt.Hint) }
                 foreach ($ln in $lines) { Dim ("        $ln") }
             }
+            if ($opt.PSObject.Properties['Warning'] -and $opt.Warning) {
+                $wlines = if ($opt.Warning -is [array]) { $opt.Warning } else { @($opt.Warning) }
+                foreach ($wln in $wlines) { Write-Host ("        [!] $wln") -ForegroundColor Yellow }
+            }
         }
         G ''
         Write-Host '  > ' -NoNewline -ForegroundColor Green
@@ -1335,6 +1339,7 @@ function Invoke-Wizard {
             Hint  = @(
                 'Everything from AI + MEDIA STREAMING + MEDIA REQUEST + PRODUCTIVITY.'
             )
+            Warning = 'Online pull takes ~45 min on average to fetch every image (one-time, depends on your connection).'
         }
         [pscustomobject]@{
             Label = 'CUSTOM (pick individual apps)'
