@@ -3174,8 +3174,15 @@ function Start-Stack {
     # surgically; service names follow it positionally.
     $upIdx = [array]::IndexOf($pullArgs, 'up')
     if ($upIdx -ge 0) {
-        $services = $pullArgs[($upIdx + 2)..($pullArgs.Length - 1)]   # may be @()
-        $pullArgs = @($pullArgs[0..($upIdx - 1)]) + @('pull','--policy','missing','--include-deps') + $services
+        # Service tail (positional args after `up -d`). Guard the slice:
+        # in PowerShell `arr[(n+2)..(len-1)]` becomes a REVERSED range
+        # when n+2 > len-1 (i.e. when there's no tail), which would
+        # pick up `-d` and feed it to `compose pull` → "unknown flag -d".
+        $tail = @()
+        if ($pullArgs.Length -gt ($upIdx + 2)) {
+            $tail = $pullArgs[($upIdx + 2)..($pullArgs.Length - 1)]
+        }
+        $pullArgs = @($pullArgs[0..($upIdx - 1)]) + @('pull','--policy','missing','--include-deps') + $tail
     } else {
         $pullArgs += @('pull','--policy','missing','--include-deps')
     }
