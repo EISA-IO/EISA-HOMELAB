@@ -279,7 +279,10 @@ if errorlevel 1 (
     goto :MAIN_MENU
 )
 
-set "COMPOSE_PROFILES=ai,media,tunnel"
+:: Enumerate every profile so `docker compose down` sees every service
+:: even if a future service is scoped to media-stream/media-request/
+:: productivity ONLY (without `media` as a fallback profile).
+set "COMPOSE_PROFILES=ai,media,media-stream,media-request,productivity,tunnel"
 
 echo   [1/3] docker compose down --remove-orphans -t 10  (project: eisa-homelab)
 echo         Containers get 10s to stop gracefully, then SIGKILL. Prevents a

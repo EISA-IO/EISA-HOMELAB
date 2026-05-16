@@ -562,7 +562,7 @@ do_stop() {
     echo "        ----------------------------------------------------------------"
     (
         cd "${COMPOSE_DIR}"
-        COMPOSE_PROFILES=ai,media,tunnel docker compose down --remove-orphans -t 10
+        COMPOSE_PROFILES=ai,media,media-stream,media-request,productivity,tunnel docker compose down --remove-orphans -t 10
     )
     echo "        ----------------------------------------------------------------"
     echo
