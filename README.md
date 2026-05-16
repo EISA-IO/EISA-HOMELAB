@@ -62,8 +62,8 @@ The first-run wizard:
 - 🐳 Auto-installs **Docker Desktop** if it's missing (winget / MSI on Windows, brew / DMG on macOS) — one UAC / sudo prompt and it resumes.
 - 🧱 Asks which stack:
   - **AI** — chat, search, research, agents
-  - **MEDIA STREAMING STACK** — Jellyfin, Navidrome, Immich
-  - **MEDIA REQUEST STACK** — Seerr + Sonarr + Radarr + Prowlarr + qBittorrent
+  - **MEDIA STREAMING** — Jellyfin, Navidrome, Immich
+  - **MEDIA REQUEST** — Seerr + Sonarr + Radarr + Prowlarr + qBittorrent
   - **PRODUCTIVITY** — file tools, Omni Tools, Tor Browser
   - **ULTIMATE** — everything above
   - **CUSTOM** — pick individual services
