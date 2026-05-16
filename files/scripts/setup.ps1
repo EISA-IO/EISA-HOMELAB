@@ -3221,217 +3221,31 @@ function Start-Stack {
     }
 
     # ----------------------------------------------------------------
-    # PHASE 1 — bounded-parallel `docker pull` pool (3 at a time).
-    # Strategy: maintain a fixed-size pool of background `docker pull`
-    # processes. Each pulled image gets ~bandwidth/3 instead of
-    # ~bandwidth/N — home internet (where N is large) was getting
-    # split too thin and none of the 11+ parallel pulls progressed.
-    # As each pool slot finishes, the next queued image fills it.
-    # Heartbeat every 10s shows currently-downloading short names +
-    # queue depth, so the screen never goes static and never spams.
+    # PHASE 1 — `docker compose pull`. Plain, traditional output;
+    # let compose handle parallelism, retries, and progress display.
+    # The previous custom pull pool was occasionally getting stuck on
+    # transient cloudflare blips with no clean recovery path.
     # ----------------------------------------------------------------
-    $imgStatus = Get-StackImageStatus -Profiles $Profiles -CustomServices $CustomServices -GpuMode $GpuMode
-    $missing   = @($imgStatus.Missing)
-    $declared  = @($imgStatus.Declared)
+    $pullArgs    = [System.Collections.Generic.List[string]]::new()
+    $skipDashD   = $false
+    foreach ($a in $arglist) {
+        if ($a -eq 'up')                   { $pullArgs.Add('pull'); $skipDashD = $true; continue }
+        if ($skipDashD -and $a -eq '-d')   { $skipDashD = $false; continue }
+        $pullArgs.Add($a)
+    }
 
     G ''
-    if ($missing.Count -eq 0 -and $declared.Count -gt 0) {
-        Ok "[1/2] All $($declared.Count) image(s) already cached locally — skipping pull."
-    } elseif ($declared.Count -eq 0) {
-        Dim '  [1/2] Could not enumerate declared images — falling back to compose pull during up phase.'
-    } else {
-        $total    = $missing.Count
-        $poolSize = 3   # concurrent docker pulls; tuned for home internet
-        G  "  [1/2] Pulling $total missing image(s) of $($declared.Count) total..."
-        Dim "  Pool of $poolSize parallel downloads. Heartbeat every 10s shows what's in flight."
-        G  ''
-
-        $queue    = [System.Collections.Generic.Queue[string]]::new()
-        foreach ($img in $missing) { $queue.Enqueue($img) }
-        $inFlight  = @{}  # name -> @{ Proc; LogFile; StartedAt }
-        $completed = @{}
-        $failed    = @()
-        $sw        = [System.Diagnostics.Stopwatch]::StartNew()
-
-        function Start-OnePull {
-            param([string]$Image)
-            $log  = [IO.Path]::GetTempFileName()
-            $err  = "$log.err"
-            # Redirect BOTH stdout + stderr to files. docker pull writes
-            # per-layer "Downloading X/Y" progress to stdout via \r
-            # overwrites — the file grows with every update, and we can
-            # tail it for the latest progress in our heartbeat below.
-            $proc = Start-Process -FilePath 'docker' -ArgumentList @('pull', $Image) `
-                -NoNewWindow -PassThru `
-                -RedirectStandardOutput $log `
-                -RedirectStandardError  $err
-            return @{ Proc = $proc; LogFile = $log; ErrFile = $err; StartedAt = [datetime]::Now }
-        }
-
-        # Read a redirected docker-pull log and return per-image layer
-        # progress. When docker's stdout is redirected (not a TTY), docker
-        # SUPPRESSES per-layer "Downloading X/Y MB" progress and only emits
-        # state transitions: "Pulling fs layer", "Download complete",
-        # "Pull complete". Counting those gives a coarse but reliable
-        # signal: layers_done / layers_total ticks up as each layer
-        # finishes. Plus we return the most recent state line so the user
-        # sees exactly what docker is doing right now.
-        function Get-PullState {
-            param([string]$LogFile)
-            try {
-                if (-not (Test-Path $LogFile)) { return $null }
-                $fs = [IO.File]::Open($LogFile,'Open','Read','ReadWrite')
-                try {
-                    $sr = New-Object IO.StreamReader($fs)
-                    $content = $sr.ReadToEnd()
-                    $sr.Close()
-                } finally { $fs.Close() }
-                # Each layer in an image goes through one of two paths:
-                #   (a) already in local cache  ->  "Already exists"   (1 line)
-                #   (b) needs fetching          ->  "Pulling fs layer"
-                #                                   "Download complete"
-                #                                   "Pull complete"    (terminal)
-                # Total layers = a + b. Done layers = a + ("Pull complete"
-                # count). Including "Already exists" in BOTH counters fixes
-                # the previous bug where a fully-cached image showed 0/14
-                # forever because no "Pulling fs layer" was emitted.
-                $alreadyExists = ([regex]::Matches($content, 'Already exists')).Count
-                $pullingLayers = ([regex]::Matches($content, 'Pulling fs layer')).Count
-                $pullComplete  = ([regex]::Matches($content, 'Pull complete')).Count
-                $downloaded    = ([regex]::Matches($content, 'Download complete')).Count
-                $lines = $content -split "[\r\n]+" | Where-Object { $_ -match '\S' }
-                $last  = if ($lines.Count -gt 0) { $lines[-1] } else { 'starting' }
-                $last  = $last -replace '^[0-9a-f]{8,}\s*:\s*', ''
-                return [pscustomobject]@{
-                    Total      = $alreadyExists + $pullingLayers
-                    Done       = $alreadyExists + $pullComplete
-                    Downloaded = $alreadyExists + $downloaded
-                    Last       = $last
-                }
-            } catch { return $null }
-        }
-
-        # Aggregate bytes-on-disk metric so we have a registry-independent
-        # signal of forward motion even when a registry is throttling and
-        # no per-image state changes are happening for minutes. Sums the
-        # human-readable sizes returned by `docker images --format`. The
-        # absolute total counts shared layers per-image (overcounted), but
-        # the DELTA between heartbeats is what matters and that's reliable.
-        function Get-TotalImageMB {
-            $total = 0.0
-            & docker images --format '{{.Size}}' 2>$null | ForEach-Object {
-                if ($_ -match '^(\d+(?:\.\d+)?)\s*([KMGT]?B)$') {
-                    $n = [double]$Matches[1]; $u = $Matches[2]
-                    $mb = switch ($u) {
-                        'B'  { $n / 1MB }
-                        'KB' { $n / 1024.0 }
-                        'MB' { $n }
-                        'GB' { $n * 1024.0 }
-                        'TB' { $n * 1024.0 * 1024.0 }
-                        default { 0 }
-                    }
-                    $total += $mb
-                }
-            }
-            return [math]::Round($total, 0)
-        }
-        $baselineMB = Get-TotalImageMB
-        $lastTickMB = $baselineMB
-
-        # Fill the pool with the first poolSize images.
-        while ($queue.Count -gt 0 -and $inFlight.Count -lt $poolSize) {
-            $img = $queue.Dequeue()
-            $inFlight[$img] = Start-OnePull -Image $img
-        }
-
-        $lastTickSec = -10
-        while ($inFlight.Count -gt 0) {
-            Start-Sleep -Milliseconds 500
-
-            # Reap completed pulls.
-            $finishedNames = @()
-            foreach ($img in @($inFlight.Keys)) {
-                if ($inFlight[$img].Proc.HasExited) { $finishedNames += $img }
-            }
-            foreach ($img in $finishedNames) {
-                $info  = $inFlight[$img]
-                $rc    = $info.Proc.ExitCode
-                $durSec = ([datetime]::Now - $info.StartedAt).TotalSeconds
-                $durStr = if ($durSec -ge 60) { '{0}m{1:00}s' -f ([math]::Floor($durSec/60)), ([int]($durSec % 60)) } else { '{0:N0}s' -f $durSec }
-                if ($rc -eq 0) {
-                    $completed[$img] = $true
-                    $done = $completed.Count
-                    Write-Host ("  [{0,2}/{1,2}] ✓ {2}  ({3})" -f $done, $total, $img, $durStr) -ForegroundColor Green
-                } else {
-                    $failed += $img
-                    Write-Host ("  [!] FAILED: $img (exit $rc after $durStr)") -ForegroundColor Red
-                    foreach ($f in @($info.ErrFile, $info.LogFile)) {
-                        if (Test-Path $f) {
-                            foreach ($l in (Get-Content $f -Tail 5 -ErrorAction SilentlyContinue)) {
-                                Write-Host "    $l" -ForegroundColor Red
-                            }
-                        }
-                    }
-                }
-                Remove-Item $info.LogFile -Force -ErrorAction SilentlyContinue
-                if ($info.ErrFile) { Remove-Item $info.ErrFile -Force -ErrorAction SilentlyContinue }
-                $inFlight.Remove($img)
-            }
-
-            # Replenish from the queue.
-            while ($queue.Count -gt 0 -and $inFlight.Count -lt $poolSize) {
-                $img = $queue.Dequeue()
-                $inFlight[$img] = Start-OnePull -Image $img
-            }
-
-            # Heartbeat every 10s — show short names + REAL per-image
-            # byte progress so the user can see numbers ticking up.
-            # Stops printing when nothing's running.
-            $secs = [int]$sw.Elapsed.TotalSeconds
-            if ($inFlight.Count -gt 0 -and $secs -ge $lastTickSec + 10) {
-                $lastTickSec = $secs
-                $elapsed = if ($secs -ge 60) {
-                    '{0}m{1:00}s' -f ([math]::Floor($secs/60)), ($secs % 60)
-                } else { "${secs}s" }
-                $nowMB   = Get-TotalImageMB
-                $delta   = [int]($nowMB - $lastTickMB)
-                $totalDl = [int]($nowMB - $baselineMB)
-                $lastTickMB = $nowMB
-                $deltaStr = if ($delta -gt 0) { "+${delta}MB this tick" }
-                            elseif ($totalDl -gt 0) { "no new bytes" }
-                            else { 'verifying manifests...' }
-                $queued = if ($queue.Count -gt 0) { "  ($($queue.Count) queued)" } else { '' }
-                Write-Host ("    [{0,6}] {1} downloading — {2}, total +{3}MB{4}" -f $elapsed, $inFlight.Count, $deltaStr, $totalDl, $queued) -ForegroundColor DarkGreen
-                foreach ($img in $inFlight.Keys) {
-                    $shortName = ($img -split '/')[-1]
-                    if ($shortName.Length -gt 36) { $shortName = $shortName.Substring(0,33) + '...' }
-                    $state = Get-PullState -LogFile $inFlight[$img].LogFile
-                    if (-not $state -or $state.Total -eq 0) {
-                        $line = 'starting...'
-                    } else {
-                        $last = $state.Last
-                        if ($last.Length -gt 32) { $last = $last.Substring(0,29) + '...' }
-                        $line = '[{0,2}/{1,2} layers, {2} d/l] {3}' -f $state.Done, $state.Total, $state.Downloaded, $last
-                    }
-                    Write-Host ("              · {0,-36}  {1}" -f $shortName, $line) -ForegroundColor DarkGreen
-                }
-            }
-        }
-
-        $eStr = if ($sw.Elapsed.TotalSeconds -ge 60) {
-            '{0}m{1:00}s' -f ([math]::Floor($sw.Elapsed.TotalSeconds/60)), ([int]($sw.Elapsed.TotalSeconds % 60))
-        } else { '{0:N1}s' -f $sw.Elapsed.TotalSeconds }
-
-        if ($failed.Count -gt 0) {
-            G ''
-            Err ("$($failed.Count) image(s) failed to pull after " + $eStr + ":")
-            foreach ($f in $failed) { Err "    $f" }
-            Err '    Check internet / registry creds, then re-run Start Stack.'
-            exit 1
-        }
+    G  '  [1/2] Pulling images...'
+    G  ''
+    & docker @pullArgs
+    if ($LASTEXITCODE -ne 0) {
         G ''
-        Ok "$($completed.Count) image(s) pulled in $eStr, $($declared.Count - $total) already cached."
+        Err 'docker compose pull failed.'
+        Err '    Check internet / registry creds, then re-run Start Stack.'
+        exit $LASTEXITCODE
     }
+    G ''
+    Ok 'Images ready.'
 
     # ----------------------------------------------------------------
     # PHASE 2 — bring containers up with the now-cached images.
