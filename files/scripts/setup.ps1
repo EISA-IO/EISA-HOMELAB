@@ -3188,25 +3188,31 @@ function Start-Stack {
     }
 
     G ''
-    G  '  Pulling images...'
-    Dim '  Compose pulls in parallel; one tick per image as it finishes.'
+    G  '  [1/2] Pulling images...'
     G  ''
 
-    $pulled = 0
-    $failed = 0
+    $pulled  = 0
+    $skipped = 0
+    $failed  = 0
     & docker @pullArgs 2>&1 | ForEach-Object {
         $line = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
         if ([string]::IsNullOrWhiteSpace($line)) { return }
         # Drop per-layer progress (lines that start with a short hash).
         if ($line -match '^\s*[0-9a-f]{8,16}\s+') { return }
-        # Drop per-service intermediate states; we only want the terminal "Pulled" / "Error".
+        # Drop per-service intermediate states + the "Skipped - already
+        # present locally" lines (which would otherwise produce a wall of
+        # noise on every re-run of Start Stack).
         if ($line -match '^\s*\S+\s+(Pulling|Extracting|Downloading|Verifying|Waiting|Already exists|Pull complete|Digest:|Status:)') { return }
+        if ($line -match '^\s*(\S+)\s+Skipped\b') {
+            $skipped++
+            return
+        }
         # Drop compose's own startup "Pulling <N>/<M>" tally.
         if ($line -match '^\s*\[\+\] Pulling\b') { return }
         # Per-service "Pulled" — the line we want.
         if ($line -match '^\s*(\S+)\s+Pulled\s*$') {
             $pulled++
-            Write-Host ('  [+] Pulled ' + $matches[1]) -ForegroundColor Green
+            Write-Host ('  [{0,2}] Pulled {1}' -f $pulled, $matches[1]) -ForegroundColor Green
             return
         }
         # Per-service error.
@@ -3222,9 +3228,11 @@ function Start-Stack {
         Err 'docker compose pull failed — see lines above. Check your internet and registry creds.'
         exit $LASTEXITCODE
     }
-    if ($pulled -eq 0) {
-        Dim '  All images already cached locally — nothing new to download.'
-    } else {
+    if ($pulled -eq 0 -and $skipped -gt 0) {
+        Dim "  $skipped image(s) already cached locally — nothing new to download."
+    } elseif ($pulled -gt 0 -and $skipped -gt 0) {
+        Ok "$pulled image(s) pulled, $skipped already cached."
+    } elseif ($pulled -gt 0) {
         Ok "$pulled image(s) pulled."
     }
 
@@ -3232,50 +3240,47 @@ function Start-Stack {
     # PHASE 2 — bring containers up with the now-cached images.
     # ----------------------------------------------------------------
     G ''
-    Dim ("  docker " + ($arglist -join ' '))
-    G ''
+    G  '  [2/2] Starting containers...'
+    G  ''
 
-    # Filter compose's per-event plain output. We keep `--progress plain`
-    # (so events are stable line-per-event instead of a redrawing TTY) but
-    # strip the noise.
-    #
-    # Drop: intermediate lifecycle events (Creating/Created/Starting/Waiting/
-    #       Recreating/etc.) that produce 5+ lines per container and tell
-    #       the user nothing actionable.
-    # Keep + reformat with [OK]: terminal-success events (Started/Healthy/
-    #       Pulled/Running) so each container shows one or two clean rows.
-    # Keep + reformat with [!] : Error / Failed events so problems remain
-    #       loud and obvious.
-    # Pass through unchanged: anything we don't recognise - compose summary
-    # lines, pull-progress (Downloading/Extracting), multi-line errors.
-    $dropPattern = '^\s*(Container|Network|Volume)\s+.+?\s+(Creating|Created|Starting|Waiting|Recreating|Recreated|Stopping|Stopped|Removing|Removed)\s*$'
-    $okPattern   = '^\s*(Container|Network|Volume)\s+(.+?)\s+(Started|Healthy|Pulled|Running)\s*$'
+    # Per-event filter. Compose emits each container's lifecycle as
+    # 4-6 lines (Creating, Created, Starting, Started, [Healthy]); we
+    # collapse that to ONE line per container — first terminal state
+    # only. Healthy follow-ups are dropped because the container is
+    # already counted as up, and counting both inflates the progress
+    # number x2.
+    $dropPattern = '^\s*(Container|Network|Volume)\s+.+?\s+(Creating|Created|Starting|Waiting|Recreating|Recreated|Stopping|Stopped|Removing|Removed|Healthy)\s*$'
+    $okPattern   = '^\s*(Container|Network|Volume)\s+(.+?)\s+(Started|Running)\s*$'
     $errPattern  = '^\s*(Container|Network|Volume)\s+(.+?)\s+(Error|Failed.*)\s*$'
 
+    $upCount = 0
+    $seen    = @{}
     & docker @arglist 2>&1 | ForEach-Object {
-        # Coerce both ErrorRecord (from native stderr) and string into a
-        # single string for matching.
-        $line = if ($_ -is [System.Management.Automation.ErrorRecord]) {
-            $_.ToString()
-        } else {
-            [string]$_
-        }
+        $line = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
         if ([string]::IsNullOrWhiteSpace($line)) { return }
         if ($line -match $dropPattern) { return }
         if ($line -match $okPattern) {
-            Write-Host ('  [OK] ' + $matches[1] + ' ' + $matches[2] + ' - ' + $matches[3]) -ForegroundColor Green
-        } elseif ($line -match $errPattern) {
-            Write-Host ('  [!]  ' + $matches[1] + ' ' + $matches[2] + ' - ' + $matches[3]) -ForegroundColor Red
-        } else {
-            Write-Host $line
+            $name = $matches[2]
+            if ($seen.ContainsKey($name)) { return }
+            $seen[$name] = $true
+            $upCount++
+            Write-Host ('  [{0,2}] {1}' -f $upCount, $name) -ForegroundColor Green
+            return
         }
+        if ($line -match $errPattern) {
+            Write-Host ('  [!]  ' + $matches[2] + ' - ' + $matches[3]) -ForegroundColor Red
+            return
+        }
+        # Pass anything else (real errors, multi-line stack traces) through.
+        Write-Host $line
     }
 
     if ($LASTEXITCODE -ne 0) {
         Err 'docker compose up failed.'
         exit $LASTEXITCODE
     }
-    Ok 'Stack is up.'
+    G ''
+    Ok "Stack is up ($upCount container(s) running)."
 }
 
 # ---------------------------------------------------------------------------
