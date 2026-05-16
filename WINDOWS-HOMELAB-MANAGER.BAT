@@ -193,12 +193,13 @@ echo   EISA HOMELAB ULTIMATE - Backup / Restore
 echo  ============================================================
 echo.
 echo   Backup:
-echo   [1] Everything       (images + volumes + persistent-storage + .env)
-echo   [2] Images only      (docker images.tar, no user data)
-echo   [3] Volumes only     (volumes + persistent-storage + .env, no images)
+echo   [1] Everything            (images + volumes + persistent-storage + .env)
+echo   [2] Images only           (docker images.tar, no user data)
+echo   [3] Volumes only          (volumes + persistent-storage + .env, no images)
+echo   [4] Images + Volumes      (no .env / state — wizard runs fresh on restore)
 echo.
 echo   Restore:
-echo   [4] Restore from a backup folder
+echo   [5] Restore from a backup folder
 echo.
 echo   [0] Back
 echo.
@@ -207,7 +208,8 @@ set /p "bchoice=  Select option: "
 if "!bchoice!"=="1" set "BMODE=full"    & goto :DO_BACKUP
 if "!bchoice!"=="2" set "BMODE=images"  & goto :DO_BACKUP
 if "!bchoice!"=="3" set "BMODE=volumes" & goto :DO_BACKUP
-if "!bchoice!"=="4" goto :DO_RESTORE
+if "!bchoice!"=="4" set "BMODE=no-env"  & goto :DO_BACKUP
+if "!bchoice!"=="5" goto :DO_RESTORE
 if "!bchoice!"=="0" goto :MAIN_MENU
 goto :DO_BACKUP_MENU
 
@@ -234,6 +236,11 @@ if "!BMODE!"=="volumes" echo   Saves named volumes + persistent-storage + .env, 
 if "!BMODE!"=="volumes" echo   Smaller and faster; restore will re-pull images from
 if "!BMODE!"=="volumes" echo   registries. Will offer to stop the stack first for a clean
 if "!BMODE!"=="volumes" echo   volume snapshot.
+if "!BMODE!"=="no-env"  echo   Saves images + named volumes + persistent-storage, but
+if "!BMODE!"=="no-env"  echo   NOT .env or state. Good for cloning your setup to another
+if "!BMODE!"=="no-env"  echo   machine without shipping your secrets — the recipient runs
+if "!BMODE!"=="no-env"  echo   the first-run wizard with the image + volume cache already
+if "!BMODE!"=="no-env"  echo   populated. Stack will be stopped for a clean snapshot.
 echo   ----------------------------------------------------------------
 %PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -Backup -BackupMode !BMODE!
 echo   ----------------------------------------------------------------

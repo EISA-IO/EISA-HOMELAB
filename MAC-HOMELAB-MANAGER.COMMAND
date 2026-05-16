@@ -452,12 +452,13 @@ do_backup_menu() {
         clear
         header "Backup / Restore"
         say "   Backup:"
-        say "   [1] Everything       (images + volumes + persistent-storage + .env)"
-        say "   [2] Images only      (docker images.tar, no user data)"
-        say "   [3] Volumes only     (volumes + persistent-storage + .env, no images)"
+        say "   [1] Everything            (images + volumes + persistent-storage + .env)"
+        say "   [2] Images only           (docker images.tar, no user data)"
+        say "   [3] Volumes only          (volumes + persistent-storage + .env, no images)"
+        say "   [4] Images + Volumes      (no .env / state — wizard runs fresh on restore)"
         echo
         say "   Restore:"
-        say "   [4] Restore from a backup folder"
+        say "   [5] Restore from a backup folder"
         echo
         say "   [0] Back"
         echo
@@ -467,7 +468,8 @@ do_backup_menu() {
             1) do_backup full    ;;
             2) do_backup images  ;;
             3) do_backup volumes ;;
-            4) do_restore        ;;
+            4) do_backup no-env  ;;
+            5) do_restore        ;;
             0) return            ;;
         esac
     done
@@ -499,6 +501,13 @@ do_backup() {
             echo "  Smaller and faster; restore will re-pull images from"
             echo "  registries. Will offer to stop the stack first for a clean"
             echo "  volume snapshot."
+            ;;
+        no-env)
+            echo "  Saves images + named volumes + persistent-storage, but NOT"
+            echo "  .env or state. Good for cloning your setup to another"
+            echo "  machine without shipping your secrets — the recipient runs"
+            echo "  the first-run wizard with the image + volume cache already"
+            echo "  populated. Stack will be stopped for a clean snapshot."
             ;;
     esac
     echo "  ----------------------------------------------------------------"

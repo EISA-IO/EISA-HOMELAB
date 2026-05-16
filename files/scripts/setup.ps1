@@ -29,8 +29,8 @@ param(
     [switch]$EditMediaPaths, # standalone editor for MOVIES_PATH / TV_SHOWS_PATH / MUSIC_PATH / DOWNLOADS_PATH / PHOTOS_PATH
     [switch]$Backup,         # save images + named volumes + persistent-storage + .env to a portable folder
     [string]$BackupPath,     # destination folder for -Backup (default: <repoRoot>\backups\eisa-homelab-backup-<timestamp>)
-    [ValidateSet('','full','images','volumes')]
-    [string]$BackupMode = '', # what to include in -Backup: full | images | volumes (prompts if blank)
+    [ValidateSet('','full','images','volumes','no-env')]
+    [string]$BackupMode = '', # what to include in -Backup: full | images | volumes | no-env (prompts if blank)
     [switch]$Restore,        # load images + volumes + persistent-storage from a backup folder, then start
     [string]$RestorePath     # source folder for -Restore (prompted if not supplied)
 )
@@ -1033,7 +1033,7 @@ function Get-LocalBackupFolders {
 
 function Invoke-BackupStack {
     param(
-        [ValidateSet('','full','images','volumes')]
+        [ValidateSet('','full','images','volumes','no-env')]
         [string]$Mode = ''
     )
     $repoRoot = Split-Path $ProjectRoot -Parent
@@ -1044,8 +1044,9 @@ function Invoke-BackupStack {
 
     Step 'Backup EISA Homelab' "Destination: $BackupPath"
 
-    # Mode picker: full | images | volumes. Skipped when the caller
-    # already passed -Mode / -BackupMode (e.g. from a scripted invocation).
+    # Mode picker: full | images | volumes | no-env. Skipped when the
+    # caller already passed -Mode / -BackupMode (e.g. from a scripted
+    # invocation).
     if (-not $Mode) {
         Dim '  What to include in this backup?'
         G  ''
@@ -1055,6 +1056,7 @@ function Invoke-BackupStack {
                 Hint  = @(
                     'images.tar + named volumes + persistent-storage + .env'
                     'Largest file, fully self-contained restore.'
+                    'On restore: wizard short-circuits, stack just starts.'
                 )
             }
             [pscustomobject]@{
@@ -1062,13 +1064,25 @@ function Invoke-BackupStack {
                 Hint  = @(
                     'Just images.tar — docker save of every stack image.'
                     'Use as an offline image cache; no user data included.'
+                    'On restore: wizard runs normally, pull phase is instant.'
                 )
             }
             [pscustomobject]@{
                 Label = 'Volumes only'
                 Hint  = @(
                     'Named volumes + persistent-storage + .env — no images.'
-                    'Smaller + faster; restore will re-pull images from registries.'
+                    'Smaller + faster; restore will re-pull images.'
+                    'On restore: wizard short-circuits, stack just starts.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'Images + Volumes  (no .env, wizard runs fresh)'
+                Hint  = @(
+                    'images.tar + volumes + persistent-storage. NO .env / state.'
+                    'Good for cloning your setup to another machine without'
+                    'shipping your secrets — recipient runs the wizard fresh.'
+                    'Warning: regenerated secrets break n8n encrypted workflows'
+                    'in postgres if you keep the n8n volume.'
                 )
             }
         )
@@ -1076,20 +1090,23 @@ function Invoke-BackupStack {
             1 { 'full' }
             2 { 'images' }
             3 { 'volumes' }
+            4 { 'no-env' }
         }
         G ''
     }
 
-    $doImages = $Mode -in @('full','images')
-    $doData   = $Mode -in @('full','volumes')
+    $doImages  = $Mode -in @('full','images','no-env')
+    $doVolumes = $Mode -in @('full','volumes','no-env')   # named volumes + persistent-storage
+    $doEnv     = $Mode -in @('full','volumes')            # .env + .wizard-state.json
 
     $modeDesc = @{
         'full'    = 'images + volumes + persistent-storage + .env'
         'images'  = 'just docker images.tar'
         'volumes' = 'volumes + persistent-storage + .env (no images)'
+        'no-env'  = 'images + volumes + persistent-storage (no .env / state)'
     }[$Mode]
     Dim "  Mode: $Mode — $modeDesc"
-    if ($doData) {
+    if ($doVolumes) {
         Dim '  Recommend stopping the stack first so volume snapshots are consistent.'
     }
     G  ''
@@ -1097,7 +1114,7 @@ function Invoke-BackupStack {
     # Warn-and-confirm if the stack is running. Only relevant when we're
     # snapshotting volumes — images.tar is a pure docker-save of cached
     # layers and is unaffected by whether containers are running.
-    if ($doData) {
+    if ($doVolumes) {
         $running = @()
         & docker ps --format '{{.Names}}' 2>$null | ForEach-Object { if ($_) { $running += $_ } }
         if ($running.Count -gt 0) {
@@ -1112,7 +1129,7 @@ function Invoke-BackupStack {
     }
 
     New-Item -ItemType Directory -Force -Path $BackupPath | Out-Null
-    if ($doData) {
+    if ($doVolumes) {
         New-Item -ItemType Directory -Force -Path (Join-Path $BackupPath 'volumes') | Out-Null
     }
 
@@ -1137,7 +1154,7 @@ function Invoke-BackupStack {
 
     # 2) Save named volumes via an alpine helper container.
     $vols = @()
-    if ($doData) {
+    if ($doVolumes) {
         $vols = Get-StackVolumes
         if ($vols.Count -eq 0) {
             Dim '  No named volumes found — nothing to back up.'
@@ -1161,7 +1178,7 @@ function Invoke-BackupStack {
 
     # 3) Tar persistent-storage via alpine (the project lives at $ProjectRoot
     #    which is files/, persistent-storage is at $ProjectRoot/persistent-storage).
-    if ($doData) {
+    if ($doVolumes) {
         $psSrc = Join-Path $ProjectRoot 'persistent-storage'
         if (Test-Path $psSrc) {
             Ok 'Archiving persistent-storage (configs, postgres data, *arr state)...'
@@ -1181,10 +1198,11 @@ function Invoke-BackupStack {
         }
     }
 
-    # 4) Copy .env + .wizard-state.json. Skip in images-only mode — the
-    # env file holds secrets and a pure image cache should be portable
-    # without dragging credentials along.
-    if ($doData) {
+    # 4) Copy .env + .wizard-state.json. Skipped for images-only and
+    # no-env modes — the .env carries the user's secrets and the state
+    # file makes the first-run wizard auto-skip, which is undesirable
+    # for the "ship this backup to someone else" use case.
+    if ($doEnv) {
         if (Test-Path $EnvFile)   { Copy-Item $EnvFile   (Join-Path $BackupPath '.env')              -Force }
         if (Test-Path $StateFile) { Copy-Item $StateFile (Join-Path $BackupPath '.wizard-state.json') -Force }
     }
@@ -1192,8 +1210,11 @@ function Invoke-BackupStack {
     # 5) Manifest.
     $bundled = @()
     if ($doImages -and $imgs.Count -gt 0) { $bundled += 'images.tar' }
-    if ($doData) {
-        $bundled += @('volumes/*.tar.gz', 'persistent-storage.tar.gz', '.env', '.wizard-state.json')
+    if ($doVolumes) {
+        $bundled += @('volumes/*.tar.gz', 'persistent-storage.tar.gz')
+    }
+    if ($doEnv) {
+        $bundled += @('.env', '.wizard-state.json')
     }
     $manifest = @(
         "EISA Homelab backup"
