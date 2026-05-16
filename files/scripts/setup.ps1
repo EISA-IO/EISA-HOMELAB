@@ -919,6 +919,56 @@ function Get-StackImages {
     return @($declared | Where-Object { $local.ContainsKey($_) })
 }
 
+# Get a (declared, local) tuple for the images Compose would pull right
+# now, scoped to the active profiles + custom services. Used to detect
+# the "all already cached" case so we can skip the pull phase entirely.
+# Returns @{ Declared = @(...); Local = @(...); Missing = @(...) }.
+function Get-StackImageStatus {
+    param(
+        [string[]]$Profiles       = @(),
+        [string[]]$CustomServices = @(),
+        [string]$GpuMode          = 'cpu'
+    )
+    Push-Location $ProjectRoot
+    try {
+        $args = @('compose','-f','docker-compose.yml')
+        switch ($GpuMode) {
+            'nvidia' { $args += @('-f','docker-compose.nvidia.yml') }
+            'amd'    { $args += @('-f','docker-compose.amd.yml') }
+            'native' { $args += @('-f','docker-compose.ollama-native.yml') }
+        }
+        if ($CustomServices.Count -gt 0) {
+            # CUSTOM mode bypasses --profile; pass the services positionally
+            # to `config` so only their stanzas are resolved.
+            $args += @('config','--format','json')
+            $args += $CustomServices
+        } else {
+            foreach ($p in $Profiles) { $args += @('--profile', $p) }
+            $args += @('config','--format','json')
+        }
+        $cfgJson = & docker @args 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $cfgJson) {
+            return @{ Declared = @(); Local = @(); Missing = @() }
+        }
+        $cfg = $cfgJson | ConvertFrom-Json
+        $declared = @()
+        foreach ($s in $cfg.services.PSObject.Properties) {
+            if ($s.Value.image) { $declared += $s.Value.image }
+        }
+        $declared = $declared | Sort-Object -Unique
+
+        $local = @{}
+        & docker image ls --format '{{.Repository}}:{{.Tag}}' 2>$null | ForEach-Object {
+            if ($_) { $local[$_] = $true }
+        }
+        $present = @($declared | Where-Object { $local.ContainsKey($_) })
+        $missing = @($declared | Where-Object { -not $local.ContainsKey($_) })
+        return @{ Declared = $declared; Local = $present; Missing = $missing }
+    } finally {
+        Pop-Location
+    }
+}
+
 # Compose-prefixed name of every named volume declared in docker-compose.yml
 # that actually exists on the daemon.
 function Get-StackVolumes {
@@ -3201,14 +3251,31 @@ function Start-Stack {
         $pullArgs += @('pull','--policy','missing','--include-deps')
     }
 
-    G ''
-    G  '  [1/2] Pulling images...'
-    G  ''
+    # Image-awareness: if every declared image is already cached locally,
+    # skip the compose pull invocation entirely. Saves the ~5-10s compose
+    # spends iterating "Skipped" messages for every cached image.
+    $imgStatus = Get-StackImageStatus -Profiles $Profiles -CustomServices $CustomServices -GpuMode $GpuMode
+    $missing   = @($imgStatus.Missing)
+    $declared  = @($imgStatus.Declared)
 
-    $pulled  = 0
-    $skipped = 0
-    $failed  = 0
-    & docker @pullArgs 2>&1 | ForEach-Object {
+    G ''
+    if ($missing.Count -eq 0 -and $declared.Count -gt 0) {
+        Ok "[1/2] All $($declared.Count) image(s) already cached locally — skipping pull."
+        $pulled  = 0
+        $skipped = $declared.Count
+        # Fall through to phase 2.
+    } else {
+        if ($missing.Count -gt 0) {
+            G "  [1/2] Pulling $($missing.Count) missing image(s) of $($declared.Count) total..."
+        } else {
+            G '  [1/2] Pulling images...'
+        }
+        G  ''
+
+        $pulled  = 0
+        $skipped = 0
+        $failed  = 0
+        & docker @pullArgs 2>&1 | ForEach-Object {
         $line = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
         if ([string]::IsNullOrWhiteSpace($line)) { return }
         # Drop per-layer progress (lines that start with a short hash).
@@ -3238,16 +3305,17 @@ function Start-Stack {
         # Pass anything else (real errors, summary) through.
         Write-Host $line
     }
-    if ($LASTEXITCODE -ne 0) {
-        Err 'docker compose pull failed — see lines above. Check your internet and registry creds.'
-        exit $LASTEXITCODE
-    }
-    if ($pulled -eq 0 -and $skipped -gt 0) {
-        Dim "  $skipped image(s) already cached locally — nothing new to download."
-    } elseif ($pulled -gt 0 -and $skipped -gt 0) {
-        Ok "$pulled image(s) pulled, $skipped already cached."
-    } elseif ($pulled -gt 0) {
-        Ok "$pulled image(s) pulled."
+        if ($LASTEXITCODE -ne 0) {
+            Err 'docker compose pull failed — see lines above. Check your internet and registry creds.'
+            exit $LASTEXITCODE
+        }
+        if ($pulled -eq 0 -and $skipped -gt 0) {
+            Dim "  $skipped image(s) already cached locally — nothing new to download."
+        } elseif ($pulled -gt 0 -and $skipped -gt 0) {
+            Ok "$pulled image(s) pulled, $skipped already cached."
+        } elseif ($pulled -gt 0) {
+            Ok "$pulled image(s) pulled."
+        }
     }
 
     # ----------------------------------------------------------------
@@ -3531,13 +3599,6 @@ function Install-FirstLlm {
     } else {
         'WINDOWS-HOMELAB-MANAGER.BAT -> [4] LLM Manager'
     }
-    Step 'Step 5 — Starter LLMs' 'Auto-installing two recommended models so you have something to chat with out of the box. This may take a few minutes per model (~5 GB each).'
-
-    if (-not (Wait-Ollama -TimeoutSeconds 90)) {
-        Err 'Ollama is not responding on http://127.0.0.1:11434. Skipping model install.'
-        Dim "  You can run $managerName after Ollama is up."
-        return
-    }
 
     $starters = @(
         [pscustomobject]@{
@@ -3553,6 +3614,33 @@ function Install-FirstLlm {
             Purpose2= 'write/edit code, drive tools, or plan multi-step tasks.'
         }
     )
+
+    # Image-awareness: only print the header + wait for Ollama if there's
+    # actually something to install. When both starters are already pulled
+    # (re-run scenario) we'd otherwise spend 30-90s waiting for the Ollama
+    # API just to print "already installed — skipping" twice.
+    $needed = @()
+    if (Wait-Ollama -TimeoutSeconds 5) {
+        foreach ($m in $starters) {
+            if (-not (Test-OllamaModelInstalled -Tag $m.Tag)) { $needed += $m.Tag }
+        }
+    } else {
+        # Ollama not up yet — assume nothing is installed and let the
+        # full path below wait for it. This is the fresh-install case.
+        $needed = $starters | ForEach-Object { $_.Tag }
+    }
+    if ($needed.Count -eq 0) {
+        Dim "  Starter LLMs already installed (both models present) — skipping."
+        return
+    }
+
+    Step 'Step 5 — Starter LLMs' 'Auto-installing two recommended models so you have something to chat with out of the box. This may take a few minutes per model (~5 GB each).'
+
+    if (-not (Wait-Ollama -TimeoutSeconds 90)) {
+        Err 'Ollama is not responding on http://127.0.0.1:11434. Skipping model install.'
+        Dim "  You can run $managerName after Ollama is up."
+        return
+    }
 
     foreach ($m in $starters) {
         G ''
