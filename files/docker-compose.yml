@@ -325,12 +325,18 @@ services:
       - "9119:9119"
     depends_on:
       - ollama
+    # Lenient healthcheck: succeeds as soon as the gateway is listening
+    # on 8642, regardless of what /health returns. Without -f, curl
+    # exits 0 for any HTTP response (including 404 / 503), only failing
+    # on connection refused / DNS / timeout. Exact /health semantics
+    # aren't stable across versions and may return 503 until Ollama
+    # answers the first request, which we don't want to gate on.
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8642/health || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl -s -o /dev/null --connect-timeout 3 http://localhost:8642/"]
+      interval: 15s
       timeout: 5s
-      retries: 30
-      start_period: 60s
+      retries: 10
+      start_period: 30s
     restart: always
     networks:
       - caddy
@@ -367,9 +373,14 @@ services:
       - hermes_data:/home/workspace/.hermes
     ports:
       - "3030:3000"
+    # service_started, not service_healthy: the workspace has its own
+    # retry loop against the agent (HERMES_API_URL polled until 200), so
+    # blocking compose up on the agent's healthcheck just risks cascade
+    # failure if the agent takes longer than expected to bind. Workspace
+    # shows a brief "connecting" state until the agent answers — fine UX,
+    # zero failure mode.
     depends_on:
-      hermes-agent:
-        condition: service_healthy
+      - hermes-agent
     restart: always
     networks:
       - caddy
