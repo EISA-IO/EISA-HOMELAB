@@ -452,10 +452,10 @@ do_backup_menu() {
         clear
         header "Backup / Restore"
         say "   Backup:"
-        say "   [1] Backup everything           (identical clone — restore skips the wizard)"
-        say "   [2] Backup images + volumes     (no .env — wizard runs fresh on restore)"
-        say "   [3] Backup images only          (offline image cache — wizard runs)"
-        say "   [4] Backup volumes only         (user data only, no images — wizard runs)"
+        say "   [1] Backup everything           (identical clone - restore skips the wizard)"
+        say "   [2] Backup images + volumes     (no .env - wizard runs fresh on restore)"
+        say "   [3] Backup images only          (offline image cache - wizard runs)"
+        say "   [4] Backup volumes only         (user data only, no images - wizard runs)"
         echo
         say "   Restore:"
         say "   [5] Restore from a backup folder"
@@ -490,7 +490,7 @@ do_backup() {
             echo "  Dumps every Docker image + named volume + persistent-storage"
             echo "  + .env + state into a portable folder. Restoring on a"
             echo "  different PC/Mac brings the stack up identically with the"
-            echo "  same configs and secrets — first-run wizard is skipped."
+            echo "  same configs and secrets - first-run wizard is skipped."
             echo "  Will offer to stop the stack first for a clean snapshot."
             ;;
         images-volumes)

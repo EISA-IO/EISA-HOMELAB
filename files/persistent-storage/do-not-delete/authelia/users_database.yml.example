@@ -16,7 +16,7 @@ users:
     disabled: false
     displayname: "Administrator"
     # Replace this hash with the output of the docker command above.
-    # The placeholder below is NOT a valid hash — Authelia will refuse
+    # The placeholder below is NOT a valid hash - Authelia will refuse
     # to start until you replace it.
     password: "__ARGON2_HASH_REPLACE_ME__"
     email: admin@example.com

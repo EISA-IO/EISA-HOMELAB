@@ -1,4 +1,4 @@
-# Force CRLF on Windows batch files — cmd.exe parses byte-by-byte and
+# Force CRLF on Windows batch files - cmd.exe parses byte-by-byte and
 # choking on LF-only files manifests as commands losing their first 1-2
 # characters at runtime ('echo' -> 'ho', ':MAIN' -> 'MAIN', etc.). This
 # applies regardless of the user's global core.autocrlf setting.
@@ -10,12 +10,12 @@
 *.ps1 text eol=crlf
 *.psm1 text eol=crlf
 
-# macOS .command launchers and POSIX shell scripts MUST be LF — the shebang
+# macOS .command launchers and POSIX shell scripts MUST be LF - the shebang
 # breaks if there's a stray CR.
 *.command text eol=lf
 *.sh      text eol=lf
 
-# Images / binaries — don't let "text=auto" try to normalize line endings.
+# Images / binaries - don't let "text=auto" try to normalize line endings.
 *.png  binary
 *.jpg  binary
 *.jpeg binary

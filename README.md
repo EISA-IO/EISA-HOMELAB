@@ -19,13 +19,13 @@
 | :-: | --- | --- |
 | 🎬 | Netflix / Spotify / Google Photos | **Jellyfin** · **Navidrome** · **Immich** |
 | 🍿 | Plex + Overseerr + a torrent box | **Seerr** request UI → **Sonarr** / **Radarr** / **Prowlarr** → **qBittorrent**, auto-wired to *1080p, English, ≤ 4 GB* |
-| 🤖 | ChatGPT / Perplexity / research agents | **Open WebUI** · **Vane** · **Local Deep Research** — all running on local **Ollama** |
+| 🤖 | ChatGPT / Perplexity / research agents | **Open WebUI** · **Vane** · **Local Deep Research** - all running on local **Ollama** |
 | 🔗 | Zapier / Make.com | **n8n** drag-and-drop automation, wired into everything else |
 | 🧅 | a clean browser session | **Tor Browser** in a browser tab, one-click auto-login |
 | 📂 | Dropbox / a file manager over the LAN | **Filebrowser** + **Omni Tools** + **Portainer** |
-| 🌐 | port-forwarding pain | **Cloudflare tunnel** + **Authelia SSO** — opt-in; off by default |
+| 🌐 | port-forwarding pain | **Cloudflare tunnel** + **Authelia SSO** - opt-in; off by default |
 
-Nothing phones home. Every LLM prompt stays on your hardware. No OpenAI / Anthropic / Google in the install path. SearXNG has tracking disabled. Every image is pinned to a numbered version — no `:latest`. Tunnel mode is opt-in (off by default) — local-only out of the box.
+Nothing phones home. Every LLM prompt stays on your hardware. No OpenAI / Anthropic / Google in the install path. SearXNG has tracking disabled. Every image is pinned to a numbered version - no `:latest`. Tunnel mode is opt-in (off by default) - local-only out of the box.
 
 ---
 
@@ -59,78 +59,78 @@ That opens this menu:
 ```
 
 The first-run wizard:
-- 🐳 Auto-installs **Docker Desktop** if it's missing (winget / MSI on Windows, brew / DMG on macOS) — one UAC / sudo prompt and it resumes.
+- 🐳 Auto-installs **Docker Desktop** if it's missing (winget / MSI on Windows, brew / DMG on macOS) - one UAC / sudo prompt and it resumes.
 - 🧱 Asks which stack:
-  - **AI** — chat, search, research, agents
-  - **MEDIA STREAMING** — Jellyfin, Navidrome, Immich
-  - **MEDIA REQUEST** — Seerr + Sonarr + Radarr + Prowlarr + qBittorrent
-  - **PRODUCTIVITY** — file tools, Omni Tools, Tor Browser
-  - **ULTIMATE** — everything above
-  - **CUSTOM** — pick individual services
+  - **AI** - chat, search, research, agents
+  - **MEDIA STREAMING** - Jellyfin, Navidrome, Immich
+  - **MEDIA REQUEST** - Seerr + Sonarr + Radarr + Prowlarr + qBittorrent
+  - **PRODUCTIVITY** - file tools, Omni Tools, Tor Browser
+  - **ULTIMATE** - everything above
+  - **CUSTOM** - pick individual services
   - Either way, you can then drop specific containers you don't want.
-- 🌐 Asks hosting mode: **local-only** (default) or **Cloudflare tunnel** — walks you through getting a tunnel token if you choose tunnel.
+- 🌐 Asks hosting mode: **local-only** (default) or **Cloudflare tunnel** - walks you through getting a tunnel token if you choose tunnel.
 - 📁 Asks where your media lives in plain English (Movies, TV Shows, Music, Downloads, Photos).
 - 🔑 Generates every secret + Authelia argon2 hash silently.
 - 🛠️ If the **Request Stack** is in, auto-wires Seerr ↔ Sonarr ↔ Radarr ↔ Prowlarr ↔ qBittorrent, locks profiles to **1080p / English / ≤ 4 GB**, pre-loads working indexers, and makes qBittorrent **stop seeding the instant a download completes**.
 - 🧠 If AI is in the stack, auto-installs two starter LLMs (see [The LLMs](#-the-recommended-llms) below).
-- 🖱️ On the last screen offers to drop a **desktop shortcut** that opens Docker + brings the stack up + opens Heimdall in your browser — one click from a cold boot to a working stack.
+- 🖱️ On the last screen offers to drop a **desktop shortcut** that opens Docker + brings the stack up + opens Heimdall in your browser - one click from a cold boot to a working stack.
 
-After that, day-to-day is `[2] Start Stack` / `[3] Stop Stack`, or double-click the desktop shortcut. Stopping never touches your media folders or the docker named volumes — Ollama models, Open WebUI history, Jellyfin cache, qBittorrent state, etc. all survive.
+After that, day-to-day is `[2] Start Stack` / `[3] Stop Stack`, or double-click the desktop shortcut. Stopping never touches your media folders or the docker named volumes - Ollama models, Open WebUI history, Jellyfin cache, qBittorrent state, etc. all survive.
 
 ---
 
 ## 🎯 What each app does (plain English)
 
-### 🏗️ CORE — always on, you usually don't think about them
+### 🏗️ CORE - always on, you usually don't think about them
 
-- 🏠 **Heimdall** — your homepage. Tiles for every other app, so you don't remember port numbers.
-- 🚦 **Caddy** — the traffic cop. Routes requests to the right app. You never click on it.
-- 🔐 **Authelia** — the login page (tunnel mode). 2FA + group permissions.
-- 🎛️ **Portainer** — a Docker web GUI for when you want to look at logs or restart something.
+- 🏠 **Heimdall** - your homepage. Tiles for every other app, so you don't remember port numbers.
+- 🚦 **Caddy** - the traffic cop. Routes requests to the right app. You never click on it.
+- 🔐 **Authelia** - the login page (tunnel mode). 2FA + group permissions.
+- 🎛️ **Portainer** - a Docker web GUI for when you want to look at logs or restart something.
 
-### 🤖 AI — local LLMs, private search, agents, automation
+### 🤖 AI - local LLMs, private search, agents, automation
 
-- 🧠 **Ollama** — the engine running AI language models on your own hardware. Everything below talks to it.
-- 💬 **Open WebUI** — a ChatGPT-style chat window. The main app you'll open.
-- 🔍 **SearXNG** — a private metasearch engine. Google / Bing / DuckDuckGo results without the tracking.
-- 📚 **Local Deep Research** — give it a topic, get a structured report. Like a researcher that works overnight.
-- ❓ **Vane** — a Perplexity-style answer engine. One-shot questions with sources.
-- 🔗 **n8n** — drag-and-drop automation. *"When an email arrives → save the attachment → ask the AI to summarise it → text me the result."*
-- 🧭 **Qdrant** — vector database under the hood for AI memory / RAG. You won't open it manually, n8n + research agents talk to it.
+- 🧠 **Ollama** - the engine running AI language models on your own hardware. Everything below talks to it.
+- 💬 **Open WebUI** - a ChatGPT-style chat window. The main app you'll open.
+- 🔍 **SearXNG** - a private metasearch engine. Google / Bing / DuckDuckGo results without the tracking.
+- 📚 **Local Deep Research** - give it a topic, get a structured report. Like a researcher that works overnight.
+- ❓ **Vane** - a Perplexity-style answer engine. One-shot questions with sources.
+- 🔗 **n8n** - drag-and-drop automation. *"When an email arrives → save the attachment → ask the AI to summarise it → text me the result."*
+- 🧭 **Qdrant** - vector database under the hood for AI memory / RAG. You won't open it manually, n8n + research agents talk to it.
 
-### 🎬 MEDIA STREAMING STACK — your own Netflix / Spotify / Google Photos
+### 🎬 MEDIA STREAMING STACK - your own Netflix / Spotify / Google Photos
 
-- 🎥 **Jellyfin** — Netflix for your movies and TV. Reads from the folder you set, streams to TV / phone / browser. Pinned to **10.10.7** (10.11.x has a known startup bug).
-- 🎵 **Navidrome** — Spotify for your music. Same idea. Beautiful mobile apps available.
-- 📸 **Immich** — Google Photos replacement. Phone auto-backup, face / object recognition, search by what's *in* the photo.
+- 🎥 **Jellyfin** - Netflix for your movies and TV. Reads from the folder you set, streams to TV / phone / browser. Pinned to **10.10.7** (10.11.x has a known startup bug).
+- 🎵 **Navidrome** - Spotify for your music. Same idea. Beautiful mobile apps available.
+- 📸 **Immich** - Google Photos replacement. Phone auto-backup, face / object recognition, search by what's *in* the photo.
 
-### 🍿 MEDIA REQUEST STACK — request a movie/show, it downloads itself
+### 🍿 MEDIA REQUEST STACK - request a movie/show, it downloads itself
 
 Pick a title in Seerr → Sonarr/Radarr find it → Prowlarr searches indexers → qBittorrent pulls it → it lands in your Jellyfin library. Fully auto-wired by the wizard with sane defaults you can change in each app's UI.
 
-- 📺 **Seerr** — the request UI. Looks like Netflix, but the "Watch" button is "Request". Signs in via your Jellyfin account.
-- 📡 **Sonarr** — the TV brain. Monitors shows, grabs new episodes, renames + moves files into your TV folder.
-- 🎞️ **Radarr** — same idea for movies.
-- 🛰️ **Prowlarr** — one place to manage torrent indexers; Sonarr + Radarr ask it where to look.
-- ⚡ **qBittorrent** — the downloader. Configured to **stop seeding the instant a download finishes** (no background bandwidth use, no ratio babysitting).
+- 📺 **Seerr** - the request UI. Looks like Netflix, but the "Watch" button is "Request". Signs in via your Jellyfin account.
+- 📡 **Sonarr** - the TV brain. Monitors shows, grabs new episodes, renames + moves files into your TV folder.
+- 🎞️ **Radarr** - same idea for movies.
+- 🛰️ **Prowlarr** - one place to manage torrent indexers; Sonarr + Radarr ask it where to look.
+- ⚡ **qBittorrent** - the downloader. Configured to **stop seeding the instant a download finishes** (no background bandwidth use, no ratio babysitting).
 
 Default quality profile: **HD-1080p, English-only, reject any release > 4 GB**. Custom Formats enforce the size + language caps automatically.
 
-### 🛠️ PRODUCTIVITY — utilities
+### 🛠️ PRODUCTIVITY - utilities
 
-- 📂 **Filebrowser** — web file explorer for the folders you exposed. Upload / rename / move from any browser.
-- 🧰 **Omni Tools** — local versions of every "online tool" site (resize, convert, QR, base64, …) — nothing leaves your machine.
-- 🧅 **Tor Browser** — full Tor Browser in a browser tab. One click from Heimdall.
+- 📂 **Filebrowser** - web file explorer for the folders you exposed. Upload / rename / move from any browser.
+- 🧰 **Omni Tools** - local versions of every "online tool" site (resize, convert, QR, base64, …) - nothing leaves your machine.
+- 🧅 **Tor Browser** - full Tor Browser in a browser tab. One click from Heimdall.
 
-### 🌐 ONLINE-ONLY — only in tunnel mode
+### 🌐 ONLINE-ONLY - only in tunnel mode
 
-- ☁️ **Cloudflared** — connects your stack to Cloudflare so people can reach `chat.yourdomain.com`, `movie.yourdomain.com`, etc. without you opening router ports.
+- ☁️ **Cloudflared** - connects your stack to Cloudflare so people can reach `chat.yourdomain.com`, `movie.yourdomain.com`, etc. without you opening router ports.
 
 ---
 
 ## 🗺️ Service URLs (local mode)
 
-After the wizard finishes, every app is reachable at a clean `*.localhost` URL — no port numbers, no hosts-file edits. Caddy on port 80 proxies each subdomain to the right container. (`*.localhost` is hard-resolved to `127.0.0.1` by every modern browser and OS — RFC 6761.)
+After the wizard finishes, every app is reachable at a clean `*.localhost` URL - no port numbers, no hosts-file edits. Caddy on port 80 proxies each subdomain to the right container. (`*.localhost` is hard-resolved to `127.0.0.1` by every modern browser and OS - RFC 6761.)
 
 | Service | URL | Service | URL |
 | --- | --- | --- | --- |
@@ -156,7 +156,7 @@ The wizard pre-configures **`admin` / `admin`** everywhere it can, and tells you
 | Service | Username | Password | Notes |
 | --- | --- | --- | --- |
 | Jellyfin | `admin` | `admin` | wizard creates the admin via the API |
-| Seerr | — | — | signs in with your Jellyfin `admin / admin` |
+| Seerr | - | - | signs in with your Jellyfin `admin / admin` |
 | qBittorrent | `admin` | `adminadmin` | v5 requires ≥ 6 chars |
 | Authelia | `admin` | `admin` | tunnel-mode SSO gate (argon2-hashed) |
 | Portainer | `admin` | `admin` | first-visit signup |
@@ -165,43 +165,43 @@ The wizard pre-configures **`admin` / `admin`** everywhere it can, and tells you
 | Navidrome | `admin` | `admin` | first-visit prompt |
 | Open WebUI | `admin` | `admin` | first-visit signup |
 | n8n | `admin@local.host` | `admin` | owner signup |
-| Sonarr / Radarr / Prowlarr / Heimdall | — | — | no login required on LAN |
+| Sonarr / Radarr / Prowlarr / Heimdall | - | - | no login required on LAN |
 
 ---
 
 ## 🧠 The recommended LLMs
 
-The wizard auto-installs two starter models so you're not staring at an empty chat box. Two heavier "monsters" sit in `recommended_models.txt` for when you have the hardware — pull them from `[4] LLM Manager` in the launcher.
+The wizard auto-installs two starter models so you're not staring at an empty chat box. Two heavier "monsters" sit in `recommended_models.txt` for when you have the hardware - pull them from `[4] LLM Manager` in the launcher.
 
 ### 📦 Starters (auto-installed, ~5 GB each, runs on almost any GPU/CPU)
 
-- **🌟 `huihui_ai/gemma-4-abliterated:e4b-q4_K`** — General-purpose, uncensored.
+- **🌟 `huihui_ai/gemma-4-abliterated:e4b-q4_K`** - General-purpose, uncensored.
   Google's Gemma 4 (4B) with the refusal layer surgically removed (no retraining, just no more "I can't help with that"). Daily-driver for chat / writing / Q&A.
-- **👨‍💻 `carstenuhlig/omnicoder-2-9b:q4_k_m`** — Agentic + coding.
+- **👨‍💻 `carstenuhlig/omnicoder-2-9b:q4_k_m`** - Agentic + coding.
   9B fine-tune built for code generation and tool-use. Use for anything code-shaped or when you want the model to plan + execute multi-step work. Pairs cleanly with n8n's AI nodes.
 
 ### 💪 Monsters (manual pull, ~16-24 GB VRAM)
 
-- **🦣 `iaprofesseur/SuperGemma4-26b-uncensored-Q4`** — 26B uncensored Gemma 4. Same family as the small starter, much bigger brain. For long-form writing / sustained reasoning.
-- **🐲 `fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4`** — 35B Qwen MoE, aggressive uncensored finetune. **MoE** = 35B total params, only ~3B *active* per token — runs at the speed of a small model with the reasoning of a huge one. The closest you'll get to a frontier model on your own GPU.
+- **🦣 `iaprofesseur/SuperGemma4-26b-uncensored-Q4`** - 26B uncensored Gemma 4. Same family as the small starter, much bigger brain. For long-form writing / sustained reasoning.
+- **🐲 `fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4`** - 35B Qwen MoE, aggressive uncensored finetune. **MoE** = 35B total params, only ~3B *active* per token - runs at the speed of a small model with the reasoning of a huge one. The closest you'll get to a frontier model on your own GPU.
 
-> **Glossary** — *VRAM*: your GPU's memory budget. *Quantization* (`q4_K`, `Q4_K_M`): how the weights are compressed; smaller = faster, slight quality cost. *Abliterated*: refusal removed via weight surgery; the model isn't retrained or dumbed down. *MoE*: many "experts" inside; only a couple activate per token, so total params >> active params.
+> **Glossary** - *VRAM*: your GPU's memory budget. *Quantization* (`q4_K`, `Q4_K_M`): how the weights are compressed; smaller = faster, slight quality cost. *Abliterated*: refusal removed via weight surgery; the model isn't retrained or dumbed down. *MoE*: many "experts" inside; only a couple activate per token, so total params >> active params.
 
 ---
 
 ## ⚙️ Notes
 
-- **Linux containers run on Apple Silicon** — every image is multi-arch (`linux/arm64`). Docker on Mac can't pass Metal through to containers, so the wizard offers a "**Native Ollama**" mode that points Open WebUI / LDR / Vane at the host's Metal-accelerated `brew install ollama`.
-- **GPU acceleration is pluggable** — the wizard detects NVIDIA / AMD / CPU and layers the right compose override on top. Same detection drives Immich's NVENC / VAAPI transcoding + ML acceleration.
-- **All images pinned** — no `:latest` anywhere in `docker-compose.yml`; upgrades are explicit. Bumping a version is a one-line change you can roll back from.
-- **Re-configure later** — open the launcher → `[1] First-Run Setup` again. Existing data survives; the wizard is fully idempotent (it drift-detects, e.g., a stale qBittorrent port in Sonarr's download client and corrects it).
-- **Manual stop** — `cd files && docker compose down`. The launcher's `[3]` does this + a by-`container_name` fallback so containers from older installs are also caught.
+- **Linux containers run on Apple Silicon** - every image is multi-arch (`linux/arm64`). Docker on Mac can't pass Metal through to containers, so the wizard offers a "**Native Ollama**" mode that points Open WebUI / LDR / Vane at the host's Metal-accelerated `brew install ollama`.
+- **GPU acceleration is pluggable** - the wizard detects NVIDIA / AMD / CPU and layers the right compose override on top. Same detection drives Immich's NVENC / VAAPI transcoding + ML acceleration.
+- **All images pinned** - no `:latest` anywhere in `docker-compose.yml`; upgrades are explicit. Bumping a version is a one-line change you can roll back from.
+- **Re-configure later** - open the launcher → `[1] First-Run Setup` again. Existing data survives; the wizard is fully idempotent (it drift-detects, e.g., a stale qBittorrent port in Sonarr's download client and corrects it).
+- **Manual stop** - `cd files && docker compose down`. The launcher's `[3]` does this + a by-`container_name` fallback so containers from older installs are also caught.
 
 ---
 
 ## 🔒 Security
 
-- Real `.env`, `users_database.yml`, and rendered configs (`Caddyfile`, `configuration.yml`, `settings.yml`) are gitignored — they contain tokens, secrets, encryption keys, and password hashes. Never commit them.
+- Real `.env`, `users_database.yml`, and rendered configs (`Caddyfile`, `configuration.yml`, `settings.yml`) are gitignored - they contain tokens, secrets, encryption keys, and password hashes. Never commit them.
 - In tunnel mode every protected route requires a valid Authelia session (group `admins` by default). Only `auth.${DOMAIN}` and `c.${DOMAIN}` bypass.
 - The `admin` / `admin` defaults are **only safe on a trusted LAN**. Before turning on Cloudflare tunnel mode, log into Jellyfin, Seerr, Immich, etc. and rotate them. The Authelia password should be the first to change.
 - qBittorrent's WebUI subnet whitelist is wide-open (`0.0.0.0/0, ::/0`) so the in-container Sonarr/Radarr can talk to it; this is fine on a LAN, *not* fine if you port-forward qBittorrent directly. In tunnel mode it sits behind Authelia.

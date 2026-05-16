@@ -13,7 +13,7 @@ mode con: cols=120 lines=32 >nul 2>&1
 ::
 :: Use WINDOWS-HOMELAB-MANAGER.BAT for the menu-driven first-run wizard,
 :: stop/list, and the LLM manager. WINDOWS_HOMELAB_START.bat is intentionally
-:: a no-questions launcher — double-click and walk away.
+:: a no-questions launcher - double-click and walk away.
 :: =============================================================================
 
 set "SCRIPT_DIR=%~dp0"

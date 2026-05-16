@@ -1,5 +1,5 @@
 # =============================================================================
-# Secrets — NEVER commit
+# Secrets - NEVER commit
 # =============================================================================
 files/.env
 files/.env.local
@@ -22,7 +22,7 @@ files/persistent-storage/do-not-delete/hermes-agent/
 files/persistent-storage/do-not-delete/authelia/users_database.yml
 
 # =============================================================================
-# Runtime data — bind-mounts that fill up at runtime
+# Runtime data - bind-mounts that fill up at runtime
 # =============================================================================
 files/persistent-storage/do-not-delete/caddy/caddy_data/
 files/persistent-storage/do-not-delete/caddy/caddy_config/
@@ -43,7 +43,7 @@ files/persistent-storage/do-not-delete/heimdall/
 files/persistent-storage/do-not-delete/filebrowser/filebrowser.db
 files/persistent-storage/do-not-delete/filebrowser/storage/
 files/persistent-storage/do-not-delete/tor/
-# *arr stack — runtime DBs, logs, sqlite, generated XML configs all live here.
+# *arr stack - runtime DBs, logs, sqlite, generated XML configs all live here.
 files/persistent-storage/do-not-delete/sonarr/
 files/persistent-storage/do-not-delete/radarr/
 files/persistent-storage/do-not-delete/prowlarr/

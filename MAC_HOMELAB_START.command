@@ -7,7 +7,7 @@
 #
 # Use MAC-HOMELAB-MANAGER.COMMAND for the menu-driven first-run wizard,
 # stop/list, and the LLM manager. MAC_HOMELAB_START.command is intentionally
-# a no-questions launcher — double-click and walk away.
+# a no-questions launcher - double-click and walk away.
 # =============================================================================
 
 set -u

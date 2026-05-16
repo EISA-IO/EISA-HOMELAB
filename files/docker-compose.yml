@@ -78,7 +78,7 @@ services:
     networks:
       - caddy
 
-  ##########  NAVIDROME — Stream Music  ##########
+  ##########  NAVIDROME - Stream Music  ##########
   navidrome:
     image: deluan/navidrome:0.60.3
     container_name: navidrome
@@ -95,12 +95,12 @@ services:
       - caddy
     profiles: [media, media-stream]
 
-  ##########  JELLYFIN — Stream Movies & TV Shows  ##########
+  ##########  JELLYFIN - Stream Movies & TV Shows  ##########
   jellyfin:
     env_file:
       - .env
     # Pinned to 10.10.7 because Jellyfin 10.11's StartupController.UpdateStartupUser
-    # throws "Sequence contains no elements" — the wizard's API-driven admin-user
+    # throws "Sequence contains no elements" - the wizard's API-driven admin-user
     # creation path was broken in 10.11 and the upstream issue (jellyfin#14576)
     # was closed as not-planned. 10.10.7 is the last release where Bootstrap-Jellyfin
     # (which lets Seerr's first-admin step run unattended) works reliably.
@@ -280,11 +280,11 @@ services:
     profiles: [ai]
 
   # ========================
-  # HERMES AGENT — NousResearch's self-improving agent gateway.
+  # HERMES AGENT - NousResearch's self-improving agent gateway.
   # Exclusively wired to the in-stack ollama. config.yaml is rendered
   # by setup.ps1 and bind-mounted on top of the data volume so it
   # survives container recreate without touching state. No OpenRouter,
-  # no Anthropic, no cloud — all 5 LLM roles (main + 4 auxiliaries)
+  # no Anthropic, no cloud - all 5 LLM roles (main + 4 auxiliaries)
   # call http://ollama:11434/v1.
   #
   # Image pinned per upstream Docker Hub: nousresearch/hermes-agent
@@ -325,7 +325,7 @@ services:
       - "8642:8642"
       - "9119:9119"
     # The default image command is `hermes` (chat REPL). It immediately
-    # EOFs on a non-TTY stdin and exits — and it doesn't host the HTTP
+    # EOFs on a non-TTY stdin and exits - and it doesn't host the HTTP
     # API the workspace needs anyway. `hermes gateway run` is the right
     # foreground command: it boots the messaging gateway service, which
     # includes the `api_server` platform (port 8642) when API_SERVER_*
@@ -352,7 +352,7 @@ services:
     profiles: [ai]
 
   # ========================
-  # HERMES WORKSPACE — web UI for chatting with hermes-agent, managing
+  # HERMES WORKSPACE - web UI for chatting with hermes-agent, managing
   # memory + swarms. Pure Node.js, env-var-driven (no config file).
   # Pairs with hermes-agent over two HTTP URLs sharing one bearer
   # token (API_SERVER_KEY == HERMES_API_TOKEN).
@@ -362,13 +362,13 @@ services:
     container_name: hermes-workspace
     environment:
       - HERMES_API_URL=http://hermes-agent:8642
-      # Defensive duplicate — upstream has been flipping between
+      # Defensive duplicate - upstream has been flipping between
       # HERMES_* and CLAUDE_* env-var prefixes across minor releases.
       # Setting both means we survive the next flip with no edit.
       - HERMES_API_TOKEN=${HERMES_API_KEY}
       - CLAUDE_API_TOKEN=${HERMES_API_KEY}
       - HERMES_DASHBOARD_URL=http://hermes-agent:9119
-      # Plain-HTTP LAN access — Secure-only cookies silently break
+      # Plain-HTTP LAN access - Secure-only cookies silently break
       # login over http://. Caddy fronts everything with https in
       # tunnel mode, so cookie security is delegated upstream there.
       - COOKIE_SECURE=0
@@ -377,7 +377,7 @@ services:
       # Authelia + Caddy already gate it in tunnel mode and on LAN
       # the trust boundary is the LAN itself.
       # Upstream has flip-flopped between HERMES_* and CLAUDE_* on
-      # this exact pair of env vars — set BOTH so we're insulated
+      # this exact pair of env vars - set BOTH so we're insulated
       # against the next rename. The unused one is silently ignored.
       - HERMES_ALLOW_INSECURE_REMOTE=1
       - CLAUDE_ALLOW_INSECURE_REMOTE=1
@@ -392,7 +392,7 @@ services:
       - "3030:3000"
     # Wait for the agent to be HEALTHY (HTTP API on 8642 responding),
     # not just started. The workspace caches its discovery result on
-    # boot — if it probes before the gateway has bound 8642 it locks
+    # boot - if it probes before the gateway has bound 8642 it locks
     # into "mode=disconnected" and never re-discovers. Healthy gate
     # avoids that race entirely.
     depends_on:
@@ -419,7 +419,7 @@ services:
     profiles: [ai]
 
   # ========================
-  # LOCAL DEEP RESEARCH — AI research assistant
+  # LOCAL DEEP RESEARCH - AI research assistant
   # ========================
   local-deep-research:
     image: localdeepresearch/local-deep-research:1.6.10
@@ -469,7 +469,7 @@ services:
     profiles: [ai]
 
   # ========================
-  # VANE — privacy-focused AI answering engine
+  # VANE - privacy-focused AI answering engine
   # ========================
   vane:
     image: itzcrazykns1337/vane:slim-v1.12.2
@@ -548,7 +548,7 @@ services:
       - DB_HOSTNAME=immich-postgres
       - REDIS_HOSTNAME=immich-redis
       # Telemetry is OPT-IN in Immich (default off when IMMICH_TELEMETRY_INCLUDE
-      # is unset). Don't set it here, and don't set it in .env — leaving it
+      # is unset). Don't set it here, and don't set it in .env - leaving it
       # unset gives the most private default. Valid values, for reference,
       # are comma-separated subsets of: host, api, microservices, jobs, io, repo.
     volumes:
@@ -581,7 +581,7 @@ services:
     image: docker.io/valkey/valkey:9.0.4
     container_name: immich-redis
     # Valkey/redis writes RDB snapshots to /data. Without a volume that
-    # path lives in the container's writable layer — every recreate
+    # path lives in the container's writable layer - every recreate
     # wipes the cache. Named volume keeps it persistent across restarts.
     volumes:
       - immich_redis_data:/data

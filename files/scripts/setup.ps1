@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  EISA Homelab Ultimate — beginner-friendly first-run wizard.
+  EISA Homelab Ultimate - beginner-friendly first-run wizard.
 
 .DESCRIPTION
   On a fresh checkout, walks the user through:
@@ -80,7 +80,7 @@ public static class EisaConsoleHelper {
 Maximize-Console
 
 # ---------------------------------------------------------------------------
-# Output helpers — green/minimal house style.
+# Output helpers - green/minimal house style.
 # ---------------------------------------------------------------------------
 function G   { param([string]$T = '') Write-Host $T -ForegroundColor Green }
 function Dim { param([string]$T = '') Write-Host $T -ForegroundColor DarkGreen }
@@ -88,7 +88,7 @@ function Err { param([string]$T) Write-Host "  ! $T" -ForegroundColor Red }
 function Ok  { param([string]$T) Write-Host "  $([char]0x2713) $T" -ForegroundColor Green }
 
 function Show-Logo {
-    # NOTE: deliberately no Clear-Host here — when invoked from a .bat
+    # NOTE: deliberately no Clear-Host here - when invoked from a .bat
     # launcher we want the bat's pre-amble (steps 1..4) to stay visible
     # above the logo so the user has a full audit trail of what ran.
     G ''
@@ -167,12 +167,12 @@ function Add-DesktopShortcut {
     if ($script:OS -eq 'Windows') {
         $target = Join-Path $repoRoot 'WINDOWS_HOMELAB_START.bat'
         if (-not (Test-Path $target)) {
-            Dim "  WINDOWS_HOMELAB_START.bat not found at $target — skipping desktop shortcut."
+            Dim "  WINDOWS_HOMELAB_START.bat not found at $target - skipping desktop shortcut."
             return
         }
         $desktop = [Environment]::GetFolderPath('Desktop')
         if (-not $desktop -or -not (Test-Path $desktop)) {
-            Dim '  Could not resolve Desktop folder — skipping shortcut.'
+            Dim '  Could not resolve Desktop folder - skipping shortcut.'
             return
         }
         $lnk = Join-Path $desktop 'EISA Homelab.lnk'
@@ -181,7 +181,7 @@ function Add-DesktopShortcut {
             $s  = $sh.CreateShortcut($lnk)
             $s.TargetPath       = $target
             $s.WorkingDirectory = $repoRoot
-            # Use cmd.exe's icon — the .bat itself has none, the shell would
+            # Use cmd.exe's icon - the .bat itself has none, the shell would
             # otherwise show a blank icon. Keeps it recognisable on Desktop.
             $s.IconLocation     = "$env:SystemRoot\System32\cmd.exe,0"
             $s.Description      = 'Start EISA Homelab (Docker + stack + Heimdall)'
@@ -193,12 +193,12 @@ function Add-DesktopShortcut {
     } elseif ($script:OS -eq 'Mac') {
         $target = Join-Path $repoRoot 'MAC_HOMELAB_START.command'
         if (-not (Test-Path $target)) {
-            Dim "  MAC_HOMELAB_START.command not found at $target — skipping desktop launcher."
+            Dim "  MAC_HOMELAB_START.command not found at $target - skipping desktop launcher."
             return
         }
         $desktop = Join-Path $HOME 'Desktop'
         if (-not (Test-Path $desktop)) {
-            Dim '  ~/Desktop missing — skipping launcher.'
+            Dim '  ~/Desktop missing - skipping launcher.'
             return
         }
         $alias = Join-Path $desktop 'EISA Homelab.command'
@@ -254,7 +254,7 @@ function Ask-Choice {
     }
 }
 
-# Master list of pickable apps. One row per user-facing app — multi-container
+# Master list of pickable apps. One row per user-facing app - multi-container
 # apps (immich, n8n, the arr stack) expose their internal services in
 # the Services array so the wizard can hand them to `docker compose up`
 # positionally. Bundle is the wizard's logical group: 'ai', 'media-stream'
@@ -270,11 +270,11 @@ function Get-StackEntries {
         [pscustomobject]@{ Bundle='ai'; Label='vane                 (Perplexity-style answer engine)';          Services=@('vane') }
         [pscustomobject]@{ Bundle='ai'; Label='n8n                  (workflow automation; bundles postgres + qdrant)'; Services=@('n8n','n8n-postgres','qdrant') }
         [pscustomobject]@{ Bundle='ai'; Label='hermes               (self-improving agent + web workspace UI; bundles agent + workspace)'; Services=@('hermes-agent','hermes-workspace') }
-        # MEDIA STREAMING — what your friends/family will actually watch
+        # MEDIA STREAMING - what your friends/family will actually watch
         [pscustomobject]@{ Bundle='media-streaming'; Label='jellyfin             (movie + TV streaming)';                    Services=@('jellyfin') }
         [pscustomobject]@{ Bundle='media-streaming'; Label='navidrome            (music streaming)';                         Services=@('navidrome') }
         [pscustomobject]@{ Bundle='media-streaming'; Label='immich               (photo + video library; bundles DB/Redis/ML)'; Services=@('immich-server','immich-machine-learning','immich-redis','immich-postgres') }
-        # MEDIA REQUEST — request UI + sonarr/radarr + indexer + torrent client
+        # MEDIA REQUEST - request UI + sonarr/radarr + indexer + torrent client
         [pscustomobject]@{ Bundle='media-request';   Label='seerr                (request UI for movies/TV)';                 Services=@('seerr') }
         [pscustomobject]@{ Bundle='media-request';   Label='sonarr               (TV automation)';                            Services=@('sonarr') }
         [pscustomobject]@{ Bundle='media-request';   Label='radarr               (movie automation)';                         Services=@('radarr') }
@@ -290,7 +290,7 @@ function Get-StackEntries {
 # Show the user the services that the picked bundle will start and let them
 # drop any they don't want. Returns the flat (and possibly trimmed) list of
 # docker-compose service names to pass to `up`, OR $null if they accepted
-# the bundle as-is — in which case the caller stays in --profile mode.
+# the bundle as-is - in which case the caller stays in --profile mode.
 function Invoke-StackTrimmer {
     param([string]$Stack)  # 'ai' | 'media' | 'productivity' | 'ultimate'
 
@@ -402,7 +402,7 @@ function Invoke-CustomServicePicker {
 }
 
 # ---------------------------------------------------------------------------
-# Docker preflight — detect OS, status, and auto-install if missing.
+# Docker preflight - detect OS, status, and auto-install if missing.
 # ---------------------------------------------------------------------------
 function Get-OS {
     # $IsWindows / $IsMacOS / $IsLinux only exist on PowerShell 6+.
@@ -567,7 +567,7 @@ function Ensure-Docker {
         exit 1
     }
 
-    # status -eq 2 — CLI missing. Offer to install.
+    # status -eq 2 - CLI missing. Offer to install.
     Step 'Docker Desktop is not installed' "We can download and install it for you now. Expect a UAC / password prompt once."
     if (-not (Ask-YesNo 'Install Docker Desktop now?' $true)) {
         Err 'Docker Desktop is required. Install it manually and re-run.'
@@ -621,7 +621,7 @@ function Read-EnvFile {
 function Write-EnvFile {
     param([string]$Path, $Map)
     $sb = [System.Text.StringBuilder]::new()
-    [void]$sb.AppendLine('# Generated by setup.ps1 — open the HOMELAB-MANAGER launcher and pick [1] First-Run Setup to change values.')
+    [void]$sb.AppendLine('# Generated by setup.ps1 - open the HOMELAB-MANAGER launcher and pick [1] First-Run Setup to change values.')
     [void]$sb.AppendLine('# Sensitive: never commit this file (it is gitignored).')
     foreach ($k in $Map.Keys) {
         [void]$sb.AppendLine("$k=$($Map[$k])")
@@ -663,7 +663,7 @@ function Format-Path {
 # Only rewrites values that match a KNOWN LEGACY SHAPE so a custom path
 # the user typed (e.g. /Volumes/Big/Music, E:\My-Stuff) is never touched.
 # Legacy shapes are matched by regex so they work regardless of which
-# username, drive letter, or platform produced them — that way a .env
+# username, drive letter, or platform produced them - that way a .env
 # copied between Mac and Windows still migrates cleanly.
 # Relies on $script:OS being set by the main flow before any branch
 # invokes it. Returns the list of keys that were migrated.
@@ -755,7 +755,7 @@ function Invoke-EditMediaPaths {
     }
     $envMap = Read-EnvFile $EnvFile
 
-    # Auto-migrate any leftover legacy F:\ defaults to C:/MEDIA/ — but only
+    # Auto-migrate any leftover legacy F:\ defaults to C:/MEDIA/ - but only
     # when the value EXACTLY matches the old default (never a custom path).
     $migrated = Migrate-LegacyMediaDefaults $envMap
     if ($migrated.Count -gt 0) {
@@ -764,7 +764,7 @@ function Invoke-EditMediaPaths {
     }
 
     # MOVIES_PATH and DOWNLOADS_PATH share TV_SHOWS_PATH defaults derivation logic
-    # in the wizard — keep this list in the same order so users see them together.
+    # in the wizard - keep this list in the same order so users see them together.
     $keys = @(
         @{ Key = 'MOVIES_PATH';    Label = 'Movies folder'    }
         @{ Key = 'TV_SHOWS_PATH';  Label = 'TV Shows folder'  }
@@ -818,7 +818,7 @@ function Invoke-EditMediaPaths {
                         Err "    Could not create: $($_.Exception.Message)"
                     }
                 } else {
-                    Dim "    Left it missing — the container will create it on first start, but you should verify the disk it lives on has enough space."
+                    Dim "    Left it missing - the container will create it on first start, but you should verify the disk it lives on has enough space."
                 }
             }
             'file'  { Err "    $new is a file, not a folder. Pick a different path." }
@@ -864,13 +864,13 @@ function Invoke-EditMediaPaths {
             Dim '  Skipped. Run [3] Stop Stack then [2] Start Stack later to apply.'
         }
     } else {
-        Dim '  No media containers are currently running — new paths will apply next time you Start Stack.'
+        Dim '  No media containers are currently running - new paths will apply next time you Start Stack.'
     }
 }
 
 # ---------------------------------------------------------------------------
 # Backup + restore. The unit of backup is a SELF-CONTAINED FOLDER on disk,
-# not a single archive — easier to inspect, easier to drop on a USB drive,
+# not a single archive - easier to inspect, easier to drop on a USB drive,
 # and the user can delete pieces (e.g. drop images.tar to save space and
 # re-pull from registries on restore).
 #
@@ -889,7 +889,7 @@ function Invoke-EditMediaPaths {
 
 # Resolve docker-compose with EVERY known profile active so the output
 # includes services + named volumes from all of them. `docker compose
-# config` filters by active profile otherwise — and "no profile" matches
+# config` filters by active profile otherwise - and "no profile" matches
 # only the always-on core, missing 90% of the stack.
 function Get-FullComposeConfig {
     Push-Location $ProjectRoot
@@ -910,7 +910,7 @@ function Get-FullComposeConfig {
 # List every image referenced by docker-compose.yml that is actually
 # pulled locally. Returns @() if compose config fails (e.g. no .env).
 # IMPORTANT: each GPU overlay (nvidia/amd/native) can swap a service's
-# image tag — e.g. immich-machine-learning swaps to ":v2.7.5-cuda" on
+# image tag - e.g. immich-machine-learning swaps to ":v2.7.5-cuda" on
 # nvidia hosts. If we only read the base file we MISS those variants,
 # the backup omits them, and restore quietly re-pulls them from the
 # registry. Union the image list across base + every overlay so the
@@ -1021,7 +1021,7 @@ function Get-StackVolumes {
 }
 
 # Scan the default backup root (<repoRoot>/backups/) for subfolders that
-# look like real EISA Homelab backups — i.e. they contain a MANIFEST.txt.
+# look like real EISA Homelab backups - i.e. they contain a MANIFEST.txt.
 # Returns @() when the root doesn't exist or no valid backup is inside.
 function Get-LocalBackupFolders {
     $repoRoot = Split-Path $ProjectRoot -Parent
@@ -1057,11 +1057,11 @@ function Invoke-BackupStack {
                 Hint  = @(
                     'images + named volumes + persistent-storage + .env + state.'
                     'On restore: wizard is SKIPPED, stack starts with the saved'
-                    'config — identical to the source machine.'
+                    'config - identical to the source machine.'
                 )
             }
             [pscustomobject]@{
-                Label = 'Backup images + volumes (no .env — wizard runs fresh)'
+                Label = 'Backup images + volumes (no .env - wizard runs fresh)'
                 Hint  = @(
                     'images + named volumes + persistent-storage. NO .env / state.'
                     'On restore: first-run wizard runs normally; secrets are'
@@ -1098,7 +1098,7 @@ function Invoke-BackupStack {
 
     $doImages  = $Mode -in @('full','images-volumes','images')
     $doVolumes = $Mode -in @('full','images-volumes','volumes')   # named volumes + persistent-storage
-    $doEnv     = $Mode -eq 'full'                                 # .env + state — only the full clone keeps these
+    $doEnv     = $Mode -eq 'full'                                 # .env + state - only the full clone keeps these
 
     $modeDesc = @{
         'full'           = 'images + volumes + persistent-storage + .env + state'
@@ -1106,14 +1106,14 @@ function Invoke-BackupStack {
         'images'         = 'just docker images.tar'
         'volumes'        = 'volumes + persistent-storage (no images, no .env)'
     }[$Mode]
-    Dim "  Mode: $Mode — $modeDesc"
+    Dim "  Mode: $Mode - $modeDesc"
     if ($doVolumes) {
         Dim '  Recommend stopping the stack first so volume snapshots are consistent.'
     }
     G  ''
 
     # Warn-and-confirm if the stack is running. Only relevant when we're
-    # snapshotting volumes — images.tar is a pure docker-save of cached
+    # snapshotting volumes - images.tar is a pure docker-save of cached
     # layers and is unaffected by whether containers are running.
     if ($doVolumes) {
         $running = @()
@@ -1139,9 +1139,9 @@ function Invoke-BackupStack {
     if ($doImages) {
         $imgs = Get-StackImages
         if ($imgs.Count -eq 0) {
-            Dim '  No locally-pulled stack images found — skipping image save.'
+            Dim '  No locally-pulled stack images found - skipping image save.'
         } else {
-            Ok "Saving $($imgs.Count) image(s) to images.tar — this is the big one, can take a few minutes."
+            Ok "Saving $($imgs.Count) image(s) to images.tar - this is the big one, can take a few minutes."
             $imagesTar = Join-Path $BackupPath 'images.tar'
             & docker save -o $imagesTar @imgs
             if ($LASTEXITCODE -ne 0) {
@@ -1158,7 +1158,7 @@ function Invoke-BackupStack {
     if ($doVolumes) {
         $vols = Get-StackVolumes
         if ($vols.Count -eq 0) {
-            Dim '  No named volumes found — nothing to back up.'
+            Dim '  No named volumes found - nothing to back up.'
         } else {
             Ok "Archiving $($vols.Count) named volume(s) via alpine tar..."
             $volBackupDir = (Resolve-Path (Join-Path $BackupPath 'volumes')).Path
@@ -1195,12 +1195,12 @@ function Invoke-BackupStack {
                 Ok 'persistent-storage.tar.gz written.'
             }
         } else {
-            Dim '  No persistent-storage folder yet — skipping.'
+            Dim '  No persistent-storage folder yet - skipping.'
         }
     }
 
     # 4) Copy .env + .wizard-state.json. Skipped for images-only and
-    # no-env modes — the .env carries the user's secrets and the state
+    # no-env modes - the .env carries the user's secrets and the state
     # file makes the first-run wizard auto-skip, which is undesirable
     # for the "ship this backup to someone else" use case.
     if ($doEnv) {
@@ -1254,7 +1254,7 @@ function Invoke-RestoreStack {
     }
     $path = $Path
     if (-not $path) {
-        Err 'No path provided — aborting.'
+        Err 'No path provided - aborting.'
         return $false
     }
     if (-not (Test-Path $path)) {
@@ -1281,11 +1281,11 @@ function Invoke-RestoreStack {
     # 1) Load images.
     $imagesTar = Join-Path $path 'images.tar'
     if (Test-Path $imagesTar) {
-        Ok 'Loading images via docker load — this is the long step.'
+        Ok 'Loading images via docker load - this is the long step.'
         & docker load -i $imagesTar
         if ($LASTEXITCODE -ne 0) { Err 'docker load failed.' } else { Ok 'Images loaded.' }
     } else {
-        Dim '  images.tar not in backup — images will be pulled from registries when the stack starts.'
+        Dim '  images.tar not in backup - images will be pulled from registries when the stack starts.'
     }
 
     # 2) Restore named volumes.
@@ -1314,7 +1314,7 @@ function Invoke-RestoreStack {
         }
         Ok 'Volumes restored.'
     } else {
-        Dim '  No volumes/ in backup — skipping named-volume restore.'
+        Dim '  No volumes/ in backup - skipping named-volume restore.'
     }
 
     # 3) Restore persistent-storage.
@@ -1338,7 +1338,7 @@ function Invoke-RestoreStack {
             Ok 'persistent-storage restored.'
         }
     } else {
-        Dim '  No persistent-storage.tar.gz in backup — keeping current contents (if any).'
+        Dim '  No persistent-storage.tar.gz in backup - keeping current contents (if any).'
     }
 
     # 4) Restore .env + .wizard-state.json.
@@ -1352,7 +1352,7 @@ function Invoke-RestoreStack {
     if ($envRestored) {
         Ok 'Restore complete. The stack will come up with the images, volumes, and settings from the backup.'
     } else {
-        Ok 'Image cache loaded from backup. (.env was not in this backup — wizard will continue so you can configure the stack.)'
+        Ok 'Image cache loaded from backup. (.env was not in this backup - wizard will continue so you can configure the stack.)'
     }
     return [pscustomobject]@{ Success = $true; EnvRestored = $envRestored }
 }
@@ -1364,10 +1364,10 @@ function Invoke-Wizard {
     # ---- Step 0: restore from a backup? -----------------------------------
     # Only shown when at least one valid EISA Homelab backup is detected
     # in <repoRoot>/backups/. On fresh clones with nothing to restore from
-    # we skip the question entirely — no point asking.
+    # we skip the question entirely - no point asking.
     $foundBackups = @(Get-LocalBackupFolders)
     if ($foundBackups.Count -gt 0) {
-        Step 'Step 0 — Restore from a previous backup?' "Detected $($foundBackups.Count) backup folder(s) in backups/. You can either load one of them now (skipping the rest of the wizard) or start fresh."
+        Step 'Step 0 - Restore from a previous backup?' "Detected $($foundBackups.Count) backup folder(s) in backups/. You can either load one of them now (skipping the rest of the wizard) or start fresh."
         Dim '  Found:'
         foreach ($b in $foundBackups | Select-Object -First 5) {
             Dim "    $($b.Name)"
@@ -1377,7 +1377,7 @@ function Invoke-Wizard {
 
         $restoreChoice = Ask-Choice @(
             [pscustomobject]@{
-                Label = 'Start fresh — pull images from the internet (recommended)'
+                Label = 'Start fresh - pull images from the internet (recommended)'
                 Hint  = @(
                     'Normal first-run flow. The wizard will ask questions and bring',
                     'up a clean stack, pulling every container image from its registry.'
@@ -1408,11 +1408,11 @@ function Invoke-Wizard {
                     # subsequent compose pull will be a no-op (images
                     # already loaded).
                     G ''
-                    Dim '  Continuing with the wizard — your image cache is pre-populated, so the pull phase will be instant.'
+                    Dim '  Continuing with the wizard - your image cache is pre-populated, so the pull phase will be instant.'
                     G ''
                 }
             } else {
-                Dim '  Restore failed or was aborted — falling through to a clean install.'
+                Dim '  Restore failed or was aborted - falling through to a clean install.'
             }
         }
     }
@@ -1428,7 +1428,7 @@ function Invoke-Wizard {
     }
 
     # ---- Step 1: stack ----------------------------------------------------
-    Step 'Step 1 — Pick what to install' 'Each option starts a different set of containers. You can re-run the first-run launcher to change later.'
+    Step 'Step 1 - Pick what to install' 'Each option starts a different set of containers. You can re-run the first-run launcher to change later.'
     Dim '  Always installed (the core):'
     Dim '    Heimdall   start page'
     Dim '    Caddy      reverse proxy'
@@ -1518,7 +1518,7 @@ function Invoke-Wizard {
     }
 
     # Optional trim step for bundle picks. If the user wants every app in
-    # the bundle they pressed (the common case), this is one Enter — no
+    # the bundle they pressed (the common case), this is one Enter - no
     # disruption. If they want to drop a few (e.g. skip Vane + Tor in
     # ULTIMATE), the trimmer returns the kept-services list and we switch
     # to customServices mode so Start-Stack lists them positionally instead
@@ -1541,10 +1541,10 @@ function Invoke-Wizard {
     Ok "Stack: $($stack.ToUpper())$(if ($customServices.Count -gt 0) { " (trimmed to $($customServices.Count) services)" })"
 
     # ---- Step 2: access mode ---------------------------------------------
-    Step 'Step 2 — Hosting: local or online?' 'This decides whether your stack lives only on your LAN, or is reachable from anywhere on the internet through your own domain.'
+    Step 'Step 2 - Hosting: local or online?' 'This decides whether your stack lives only on your LAN, or is reachable from anywhere on the internet through your own domain.'
     $accessPick = Ask-Choice @(
         [pscustomobject]@{
-            Label = 'LOCAL HOSTING (recommended — safe default)'
+            Label = 'LOCAL HOSTING (recommended - safe default)'
             Hint  = @(
                 'Apps reachable at http://localhost:PORT on this machine'
                 'and on your LAN. Nothing exposed to the public internet.'
@@ -1564,7 +1564,7 @@ function Invoke-Wizard {
     $useTunnel = ($accessPick -eq 2)
 
     if ($useTunnel) {
-        Step 'Step 2a — Cloudflare tunnel setup (walkthrough)' 'This wizard installs cloudflared automatically. You only need to grab a token from Cloudflare and tell us your domain.'
+        Step 'Step 2a - Cloudflare tunnel setup (walkthrough)' 'This wizard installs cloudflared automatically. You only need to grab a token from Cloudflare and tell us your domain.'
         G  '  PART A - Get your tunnel token (you do this now in your browser):'
         G  ''
         Dim '    1) Open  https://dash.cloudflare.com/'
@@ -1599,14 +1599,14 @@ function Invoke-Wizard {
     # ---- Step 2b: Heimdall start-page tile URLs --------------------------
     # Heimdall ships a curated set of dashboard tiles whose URLs all point at
     # the maintainer's domain. We give the user one chance, here, to put
-    # their own domain in — or leave blank for localhost-only mode.
+    # their own domain in - or leave blank for localhost-only mode.
     # The actual SQL rewrite runs later in Ensure-HeimdallTiles and is
     # idempotent: it only fires while the placeholder URLs are still in the
     # DB, so re-runs and user customizations are safe.
-    Step 'Step 2b — Heimdall start-page tiles' 'Tell us where the dashboard tiles should point. We rewrite them only once, the first time we see the placeholder URLs.'
+    Step 'Step 2b - Heimdall start-page tiles' 'Tell us where the dashboard tiles should point. We rewrite them only once, the first time we see the placeholder URLs.'
     G  '  Type the domain you want your dashboard tiles to use, or leave blank'
     G  '  for local-only mode. In local mode tiles use http://<sub>.localhost'
-    G  '  URLs which auto-resolve to 127.0.0.1 in every modern browser — Caddy'
+    G  '  URLs which auto-resolve to 127.0.0.1 in every modern browser - Caddy'
     G  '  proxies them to the right container on port 80.'
     G  ''
     Dim '    With "example.com":  https://chat.example.com, https://movie.example.com, ...'
@@ -1651,13 +1651,13 @@ function Invoke-Wizard {
         }
         # Migrate any leftover legacy defaults from older installs to the
         # current per-OS defaults (Windows: C:/MEDIA/, Mac: ~/Documents/).
-        # Only touches values that EXACTLY match an old default — never a
+        # Only touches values that EXACTLY match an old default - never a
         # custom path the user typed in themselves.
         [void](Migrate-LegacyMediaDefaults $envMap)
         if (-not $envMap.Contains('PHOTOS_PATH') -or [string]::IsNullOrWhiteSpace($envMap['PHOTOS_PATH'])) {
             $envMap['PHOTOS_PATH'] = 'C:/MEDIA/Photos'
         }
-        Step 'Step 3 — Your media folders' $pathHint
+        Step 'Step 3 - Your media folders' $pathHint
         $envMap['MOVIES_PATH']    = Format-Path (Ask 'MOVIES FOLDER LOCATION'    $envMap['MOVIES_PATH'])
         $envMap['TV_SHOWS_PATH']  = Format-Path (Ask 'TV SHOWS FOLDER LOCATION'  $envMap['TV_SHOWS_PATH'])
         $envMap['MUSIC_PATH']     = Format-Path (Ask 'MUSIC FOLDER LOCATION'     $envMap['MUSIC_PATH'])
@@ -1670,7 +1670,7 @@ function Invoke-Wizard {
     $gpuMode = 'cpu'
     if ($hasAi) {
         $detected = Get-OllamaGpuMode -OS $script:OS
-        Step 'Step 3b — GPU acceleration for Ollama' "We auto-detected your GPU as: $($detected.ToUpper()). You can override below if needed."
+        Step 'Step 3b - GPU acceleration for Ollama' "We auto-detected your GPU as: $($detected.ToUpper()). You can override below if needed."
 
         # On macOS we offer a fifth option: run Ollama NATIVELY on the host
         # (Homebrew or ollama.app) so it uses Metal. Docker on Mac can't
@@ -1742,7 +1742,7 @@ function Invoke-Wizard {
     }
 
     # ---- Step 5: passwords + secrets -------------------------------------
-    Step 'Step 4 — Secrets' 'Generating strong random keys for databases, n8n, and SSO. Nothing for you to type.'
+    Step 'Step 4 - Secrets' 'Generating strong random keys for databases, n8n, and SSO. Nothing for you to type.'
     $genSpecs = @(
         @{ Key='POSTGRES_PASSWORD';              Bytes=24; Mode='hex' }
         @{ Key='N8N_ENCRYPTION_KEY';             Bytes=32; Mode='hex' }
@@ -1756,7 +1756,7 @@ function Invoke-Wizard {
         @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
         @{ Key='SEERR_API_KEY';                  Bytes=16; Mode='hex' }
         @{ Key='HERMES_API_KEY';                 Bytes=16; Mode='hex' }
-        # JELLYFIN_ADMIN_PASSWORD intentionally omitted — see Default Credentials policy.
+        # JELLYFIN_ADMIN_PASSWORD intentionally omitted - see Default Credentials policy.
     )
     foreach ($s in $genSpecs) {
         if ($Reconfigure -or (Test-Placeholder $envMap[$s.Key])) {
@@ -1807,14 +1807,14 @@ function Write-LocalOnlyCaddyfile {
     $torPw   = [string]$Env['TOR_VNC_PW']
     $torAuth = [string]$Env['TOR_BASIC_AUTH']
     $content = @"
-# Caddy reverse proxy — LOCAL-ONLY MODE
+# Caddy reverse proxy - LOCAL-ONLY MODE
 # DOMAIN is empty in .env, so instead of *.<your-domain> we serve every
 # service at http://<sub>.localhost. *.localhost auto-resolves to 127.0.0.1
 # in all modern browsers + OSes (RFC 6761), so no hosts file, no DNS, no
-# Cloudflare needed — just open http://photos.localhost, http://chat.localhost,
+# Cloudflare needed - just open http://photos.localhost, http://chat.localhost,
 # etc., and Caddy on :80 proxies to the right container.
 #
-# LAN-only trust assumed — no Authelia gate on these routes. Switch to
+# LAN-only trust assumed - no Authelia gate on these routes. Switch to
 # tunnel mode in the wizard (Step 2) if you want SSO + public access.
 
 {
@@ -1881,7 +1881,7 @@ http://hermes.localhost {
     reverse_proxy hermes-workspace:3000
 }
 
-# AI host services (no docker container in the standard compose — these
+# AI host services (no docker container in the standard compose - these
 # routes 502 until you run flux/pony/voice/ltx natively on the host).
 http://flux.localhost {
     reverse_proxy host.docker.internal:9020
@@ -1959,7 +1959,7 @@ function Render-Templates {
         # We're generating a brand-new storage encryption key. If a stale
         # Authelia SQLite db exists, it was encrypted with the (now-lost)
         # previous key. Wipe it so Authelia re-initialises cleanly. Authelia
-        # data is just session/2FA state — nothing irreplaceable on a fresh
+        # data is just session/2FA state - nothing irreplaceable on a fresh
         # install. users_database.yml is separate and survives.
         $autheliaDb = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/authelia/db.sqlite3'
         if (Test-Path $autheliaDb) {
@@ -1985,7 +1985,7 @@ function Render-Templates {
             (Join-Path $ProjectRoot 'persistent-storage/do-not-delete/caddy/Caddyfile') `
             $renderEnv
     }
-    # Authelia rejects an empty session.cookies.domain — and 'localhost'
+    # Authelia rejects an empty session.cookies.domain - and 'localhost'
     # alone, because it needs at least one period. In local-only mode
     # DOMAIN is intentionally blank, so substitute 'homelab.local' just
     # for the Authelia render. Authelia then boots cleanly with the
@@ -2075,11 +2075,11 @@ function Ensure-AutheliaUser {
 
     # Default Credentials policy: admin / admin everywhere we control auth.
     # Tunnel-mode users should change this from the Authelia UI after first
-    # login — Authelia is the public-internet gate when DOMAIN is set.
+    # login - Authelia is the public-internet gate when DOMAIN is set.
     $password = 'admin'
     # On a fresh install this `docker run` first PULLS the authelia image
     # (~80 MB, can take 30-60s) and then computes the argon2id hash
-    # (deliberately slow by design, ~1-2s). Both are silent — so the user
+    # (deliberately slow by design, ~1-2s). Both are silent - so the user
     # would see no output for up to a minute. Pre-flight by pulling the
     # image with our normal pull-progress filter, then run the hash.
     $haveAuthelia = & docker image inspect authelia/authelia:latest 2>$null
@@ -2087,7 +2087,7 @@ function Ensure-AutheliaUser {
         Dim '  Pulling authelia image (one-off, ~80 MB) for argon2 hash generation...'
         & docker pull --quiet authelia/authelia:latest 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Err '  authelia image pull failed — argon2 hash cannot be generated.'
+            Err '  authelia image pull failed - argon2 hash cannot be generated.'
             return
         }
     }
@@ -2107,7 +2107,7 @@ function Ensure-AutheliaUser {
     }
     $hash = $hashMatch.Value
 
-    # Use .Replace() (literal) — NOT -replace — because the hash contains
+    # Use .Replace() (literal) - NOT -replace - because the hash contains
     # `$` characters that would be interpreted as backreferences.
     $newContents = $contents.Replace('__ARGON2_HASH_REPLACE_ME__', $hash)
     Set-Content $usersFile $newContents -Encoding UTF8
@@ -2121,7 +2121,7 @@ function Ensure-AutheliaUser {
 
 # ---------------------------------------------------------------------------
 # Wait-Url: poll a URL until it returns 2xx/3xx (or 401, which means the
-# app is up and refusing us — also a success for "boot detection"). Used
+# app is up and refusing us - also a success for "boot detection"). Used
 # by Configure-MediaStack to know when each *arr is ready to be wired.
 # ---------------------------------------------------------------------------
 function Wait-Url {
@@ -2129,7 +2129,7 @@ function Wait-Url {
     # Extract host + port for the TCP fallback. Invoke-WebRequest is unreliable
     # across PS versions for distinguishing "service up but 401" from "service
     # down" (PS7's HttpRequestException doesn't always carry a Response), so we
-    # treat a successful TCP socket connect as proof the listener is alive —
+    # treat a successful TCP socket connect as proof the listener is alive -
     # which is what callers actually mean by "wait for the app to come up".
     $uri = [Uri]$Url
     $remoteHost = $uri.Host
@@ -2185,11 +2185,11 @@ function Configure-MediaStack {
     $prowlarrKey = [string]$EnvMap['PROWLARR_API_KEY']
 
     if ((Test-Placeholder $sonarrKey) -or (Test-Placeholder $radarrKey) -or (Test-Placeholder $prowlarrKey)) {
-        Dim '  Media-stack API keys still placeholders — skipping auto-config.'
+        Dim '  Media-stack API keys still placeholders - skipping auto-config.'
         return
     }
 
-    Step 'Step 6 — Wiring Seerr / Sonarr / Radarr / Prowlarr / qBittorrent' 'One-time auto-config. Waiting for each app to boot, then POSTing settings via their REST APIs. Safe to re-run.'
+    Step 'Step 6 - Wiring Seerr / Sonarr / Radarr / Prowlarr / qBittorrent' 'One-time auto-config. Waiting for each app to boot, then POSTing settings via their REST APIs. Safe to re-run.'
 
     # ---- Wait for each app to be reachable -----------------------------
     foreach ($svc in @(
@@ -2209,7 +2209,7 @@ function Configure-MediaStack {
     # ---- qBittorrent: set admin/adminadmin via API (subnet whitelist
     #      makes the request unauthenticated since 127.0.0.1 is whitelisted).
     # qBittorrent v5 enforces:
-    #   - WebUI password MUST be >= 6 chars (so 'admin' is rejected — we use
+    #   - WebUI password MUST be >= 6 chars (so 'admin' is rejected - we use
     #     'adminadmin', the legacy v4 default + well-known *arr companion creds).
     #   - The AuthSubnetWhitelist bypass only applies to a handful of routes
     #     (NOT setPreferences), so we have to do a proper session-login first
@@ -2232,7 +2232,7 @@ function Configure-MediaStack {
 
         if (-not $loggedIn) {
             # Read the temp password printed by qBittorrent's first boot
-            # (a fresh one on every container start — take the LAST match).
+            # (a fresh one on every container start - take the LAST match).
             $logs = (& docker logs qbittorrent 2>&1) -join "`n"
             $matches2 = [regex]::Matches($logs, 'temporary password is provided for this session:\s*(\S+)')
             $match = if ($matches2.Count -gt 0) { $matches2[$matches2.Count - 1] } else { $null }
@@ -2256,7 +2256,7 @@ function Configure-MediaStack {
             # In qBittorrent the share-ratio limit is only checked AFTER
             # download completes, so max_ratio=0 + max_ratio_act=0 (Pause/Stop
             # in v5) means "as soon as the file is fully downloaded, stop
-            # uploading." Seed-time limits are disabled — the ratio check
+            # uploading." Seed-time limits are disabled - the ratio check
             # fires first anyway.
             $prefsObj = [ordered]@{
                 web_ui_username                   = 'admin'
@@ -2310,7 +2310,7 @@ function Configure-MediaStack {
     # Add qBittorrent as a download client to Sonarr / Radarr. If a stale
     # entry exists (e.g. pointed at :8080 from a previous wizard run before
     # we moved qBittorrent to :9081), reconcile fields in place instead of
-    # skipping — otherwise the *arr keeps showing "Connection refused
+    # skipping - otherwise the *arr keeps showing "Connection refused
     # (qbittorrent:8080)" health errors forever.
     function Add-QbDownloadClient {
         param([string]$BaseUrl, [string]$ApiKey, [string]$AppName, [string]$Category)
@@ -2368,7 +2368,7 @@ function Configure-MediaStack {
     }
 
     # Add a root folder (/tv for sonarr, /movies for radarr). The most common
-    # failure is the host path not existing before docker compose up — Docker
+    # failure is the host path not existing before docker compose up - Docker
     # then auto-creates a root-owned empty mount that the LSIO 'abc' user
     # cannot write to. We catch the 400 and tell the user how to fix it
     # instead of aborting the rest of the configurator.
@@ -2423,7 +2423,7 @@ function Configure-MediaStack {
         $schema = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'customformat/schema'
         $spec   = $schema | Where-Object { $_.implementation -eq $Implementation } | Select-Object -First 1
         if (-not $spec) {
-            Dim "  ${AppName}: no ${Implementation} in schema — skipping ${Name}."
+            Dim "  ${AppName}: no ${Implementation} in schema - skipping ${Name}."
             return $null
         }
         $spec | Add-Member -NotePropertyName name -NotePropertyValue ($Implementation -replace 'Specification$','') -Force
@@ -2476,7 +2476,7 @@ function Configure-MediaStack {
         $profiles = Invoke-ArrApi -BaseUrl $BaseUrl -ApiKey $ApiKey -Path 'qualityprofile'
         $hd = $profiles | Where-Object { $_.name -eq 'HD-1080p' } | Select-Object -First 1
         if (-not $hd) {
-            Dim "  ${AppName}: HD-1080p profile missing — skipping language/size lock."
+            Dim "  ${AppName}: HD-1080p profile missing - skipping language/size lock."
             return
         }
         # Radarr exposes profile.language; Sonarr v4 doesn't. Use Add-Member -Force
@@ -2487,7 +2487,7 @@ function Configure-MediaStack {
         }
         $hd.minFormatScore = 0
 
-        # Build the formatItems array — preserve any existing entries, flip our
+        # Build the formatItems array - preserve any existing entries, flip our
         # caps to -10000, append new ones if missing.
         $targetScores = @{}
         if ($sizeFormatId) { $targetScores[$sizeFormatId] = @{ Name = 'Size > 4 GB'; Score = -10000 } }
@@ -2561,7 +2561,7 @@ function Configure-MediaStack {
         # Public indexers (no signup, no creds). Use Prowlarr's indexer
         # schema endpoint to fetch each definition then POST it back so we
         # don't have to hard-code the schema (which changes between versions).
-        # Indexers REQUIRE appProfileId since Prowlarr 1.x — fetch the default
+        # Indexers REQUIRE appProfileId since Prowlarr 1.x - fetch the default
         # app profile id once so the POST validates.
         $appProfiles = @()
         try {
@@ -2574,7 +2574,7 @@ function Configure-MediaStack {
 
         # Public, no-signup indexers that exist in Prowlarr's current schema.
         # Some (1337x) are Cloudflare-fronted and won't return results until
-        # the user adds a FlareSolverr companion container — adding them here
+        # the user adds a FlareSolverr companion container - adding them here
         # is still useful because they'll work the moment FlareSolverr is up.
         # TheRARBG / ThePirateBay are intentionally NOT in this list: their
         # entries were removed/renamed in Prowlarr and the POST 400s.
@@ -2588,7 +2588,7 @@ function Configure-MediaStack {
             }
             $tpl = $schema | Where-Object { $_.name -eq $name } | Select-Object -First 1
             if (-not $tpl) {
-                Dim "  Prowlarr: no schema for $name (skipped — upstream may have renamed it)."
+                Dim "  Prowlarr: no schema for $name (skipped - upstream may have renamed it)."
                 continue
             }
             $tpl.enable = $true
@@ -2599,7 +2599,7 @@ function Configure-MediaStack {
                 $null = Invoke-ArrApi -BaseUrl $prowlarrUrl -ApiKey $prowlarrKey -Path 'indexer' -ApiVersion 'v1' -Method POST -Body $tpl
                 Ok "Prowlarr: added indexer $name."
             } catch {
-                Dim "  Prowlarr: $name could not be added ($($_.Exception.Message)) — skipped."
+                Dim "  Prowlarr: $name could not be added ($($_.Exception.Message)) - skipped."
             }
         }
     } catch {
@@ -2615,7 +2615,7 @@ function Configure-MediaStack {
     # Seerr's first admin user can only be created by signing in via a media
     # server admin (Plex/Jellyfin/Emby), so we run Jellyfin's startup
     # wizard programmatically first, then re-use the same admin creds to
-    # bootstrap Seerr. Both are idempotent — skip if already configured.
+    # bootstrap Seerr. Both are idempotent - skip if already configured.
     $jfAdminUser = [string]$EnvMap['JELLYFIN_ADMIN_USERNAME']
     $jfAdminPass = [string]$EnvMap['JELLYFIN_ADMIN_PASSWORD']
     if ([string]::IsNullOrWhiteSpace($jfAdminUser)) { $jfAdminUser = 'admin' }
@@ -2633,7 +2633,7 @@ function Configure-MediaStack {
 
     G ''
     Ok 'Media stack wired. Open http://request.localhost to start requesting:'
-    Dim "  Login: $jfAdminUser / admin   (default — change in Jellyfin/Seerr UI for tunnel mode)"
+    Dim "  Login: $jfAdminUser / admin   (default - change in Jellyfin/Seerr UI for tunnel mode)"
     Dim '  Sonarr + Radarr defaults: HD-1080p, English-only, reject any release > 4 GB.'
 }
 
@@ -2669,7 +2669,7 @@ function Bootstrap-Jellyfin {
     $emby = 'MediaBrowser Client="eisa-bootstrap", Device="setup", DeviceId="ehu-setup-1", Version="1.0"'
 
     if (-not $public.StartupWizardCompleted) {
-        Dim '  Jellyfin first-run wizard not finished — running it now...'
+        Dim '  Jellyfin first-run wizard not finished - running it now...'
         # /Startup/User crashes with "Sequence contains no elements" if it's
         # called before Jellyfin has finished creating its internal "root"
         # placeholder user. TCP-reachable != ready, so poll GET /Startup/User
@@ -2697,7 +2697,7 @@ function Bootstrap-Jellyfin {
             # _userManager.Users collection that the User endpoint
             # iterates. Calling /Startup/User first finds and renames
             # the seeded user cleanly. (Reproduces on every released
-            # 10.10.x and 10.11.x; upstream fix is in main only —
+            # 10.10.x and 10.11.x; upstream fix is in main only -
             # jellyfin#14576 was closed as not-planned.)
             $userBody = @{ Name=$user; Password=$pass } | ConvertTo-Json
             Invoke-WebRequest -Uri "$jfBase/Startup/User" -Method POST `
@@ -2716,7 +2716,7 @@ function Bootstrap-Jellyfin {
             return $false
         }
     } else {
-        Dim '  Jellyfin already initialised — verifying admin login works.'
+        Dim '  Jellyfin already initialised - verifying admin login works.'
     }
 
     # Verify admin creds work (this also gives us a token for /Auth/Keys).
@@ -2727,7 +2727,7 @@ function Bootstrap-Jellyfin {
             -ContentType 'application/json' -Body $loginBody -ErrorAction Stop
         $token = $loginResp.AccessToken
     } catch {
-        Err "  Jellyfin admin login failed ($user) — Seerr auto-config skipped."
+        Err "  Jellyfin admin login failed ($user) - Seerr auto-config skipped."
         Dim '    Likely cause: Jellyfin was set up out-of-band with a different password.'
         Dim "    Fix: log into http://movie.localhost as your real admin, then finish Seerr at"
         Dim '    http://request.localhost using those credentials.'
@@ -2779,7 +2779,7 @@ function Bootstrap-Seerr {
         if ($status.commitTag -or $status.version) {
             $publicSettings = Invoke-RestMethod -Uri "$seerrBase/api/v1/settings/public" -ErrorAction Stop
             if ($publicSettings.initialized) {
-                Dim '  Seerr already initialised — skipping bootstrap.'
+                Dim '  Seerr already initialised - skipping bootstrap.'
                 # Login so the caller can still chain server config if needed.
                 $session = $null
                 try {
@@ -2808,7 +2808,7 @@ function Bootstrap-Seerr {
             urlBase    = ''
             # MediaServerType.JELLYFIN = 2 in Seerr's enum. Without this,
             # auth.ts throws ApiErrorCode.NoAdminUser even when the Jellyfin
-            # account IS an admin — Seerr only auto-creates the first Seerr
+            # account IS an admin - Seerr only auto-creates the first Seerr
             # admin when serverType is explicitly Jellyfin or Emby.
             serverType = 2
         } | ConvertTo-Json
@@ -2946,17 +2946,17 @@ function Configure-SeerrServers {
 #   whitelist that lets containers on the caddy network (172.16/12) and
 #   localhost bypass auth entirely, so the API configurator works.
 # - Skips writing a file if the user has already started the app (config
-#   exists with a different API key) — preserves their customisations.
+#   exists with a different API key) - preserves their customisations.
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Configure-HermesAgent: render the Hermes Agent config.yaml that locks
 # every LLM role to the in-stack Ollama. The agent's docs accept three
-# providers: openai, custom, and ollama-cloud — we use "custom" pointed
+# providers: openai, custom, and ollama-cloud - we use "custom" pointed
 # at http://ollama:11434/v1 (the OpenAI-compatible endpoint). Per the
 # Ollama-setup guide, the auxiliary tasks (vision, web_extract,
 # session_search, compression) can each have their own model; we route
 # vision through omnicoder (tool-call capable) and the lighter tasks
-# through the smaller abliterated gemma — both already auto-installed
+# through the smaller abliterated gemma - both already auto-installed
 # by the AI bundle's first-run, so the agent works out of the box.
 # Idempotent: only writes the file if it's missing or differs.
 # ---------------------------------------------------------------------------
@@ -3014,7 +3014,7 @@ function Pre-Seed-MediaStack {
     # Ensure the media bind-mount targets exist on the host BEFORE docker
     # compose up. If they don't, Docker auto-creates them as root-owned
     # mounts inside the container, and Sonarr/Radarr (running as UID 1000
-    # 'abc' in the LSIO image) can't write into them — root folder add
+    # 'abc' in the LSIO image) can't write into them - root folder add
     # fails with FolderWritableValidator.
     # Also pre-create the seerr config bind-mount target. Seerr runs as
     # PUID 1000 and crashes on first start with EACCES when /app/config is
@@ -3028,7 +3028,7 @@ function Pre-Seed-MediaStack {
         $p = [string]$EnvMap[$k]
         if ([string]::IsNullOrWhiteSpace($p)) { continue }
         # Skip obviously-foreign paths (Mac path on Windows, Win path on Mac)
-        # — these are a stale-.env signal and creating them would just leave
+        # - these are a stale-.env signal and creating them would just leave
         # surprise empty folders on the wrong filesystem.
         if ($script:OS -eq 'Windows' -and $p -match '^/Users/') { continue }
         if ($script:OS -ne 'Windows' -and $p -match '^[A-Za-z]:[\\/]')   { continue }
@@ -3038,13 +3038,13 @@ function Pre-Seed-MediaStack {
                 Dim "  Created $k host directory: $p"
             }
         } catch {
-            Dim "  Could not create $k at $p ($($_.Exception.Message)) — Sonarr/Radarr may need manual root-folder setup."
+            Dim "  Could not create $k at $p ($($_.Exception.Message)) - Sonarr/Radarr may need manual root-folder setup."
         }
     }
 
     # Immich system-integrity markers. Immich's StorageService refuses
     # to start microservices if any of its managed subdirs under
-    # UPLOAD_LOCATION (=/data) is missing a `.immich` marker file —
+    # UPLOAD_LOCATION (=/data) is missing a `.immich` marker file -
     # this is its mount-disappeared safety check. On a fresh install
     # the host folder is empty, so we seed every required subdir with
     # the marker. See https://docs.immich.app/administration/system-integrity
@@ -3068,7 +3068,7 @@ function Pre-Seed-MediaStack {
                 }
             }
         } catch {
-            Dim "  Could not seed Immich folder structure at $photos ($($_.Exception.Message)) — immich-server may crash-loop on first start."
+            Dim "  Could not seed Immich folder structure at $photos ($($_.Exception.Message)) - immich-server may crash-loop on first start."
         }
     }
 
@@ -3089,7 +3089,7 @@ function Pre-Seed-MediaStack {
             if ($existing -and $existing -match '<ApiKey>([0-9a-fA-F]{16,})</ApiKey>') {
                 $existingKey = $Matches[1]
                 if ($existingKey -ne $a.ApiKey -and $existingKey -ne '__GENERATE_32_BYTE_HEX__') {
-                    # Preserve user's existing key — copy it back into .env so
+                    # Preserve user's existing key - copy it back into .env so
                     # the configurator can talk to the app.
                     $EnvMap[("$($a.Name.ToUpper())_API_KEY")] = $existingKey
                     Dim "  $($a.Name): keeping existing API key from config.xml."
@@ -3179,7 +3179,7 @@ WebUI\Port=9081
 # Wide-open auth bypass for the LAN. qBittorrent v5 sees Docker-NAT'd source
 # IPs as ::ffff:172.x (IPv4-mapped IPv6), which DOES NOT match plain IPv4
 # CIDRs like 172.16.0.0/12. We include the IPv6-mapped variants explicitly,
-# and add 0.0.0.0/0 + ::/0 because this is local-only mode anyway — Caddy
+# and add 0.0.0.0/0 + ::/0 because this is local-only mode anyway - Caddy
 # + Authelia gate tunnel-mode access. Without this the configurator's
 # setPreferences call returns 403.
 WebUI\AuthSubnetWhitelistEnabled=true
@@ -3212,14 +3212,14 @@ Downloads\SavePath=/downloads/
 # customizations are never clobbered, and re-runs are no-ops.
 #
 # Uses docker (alpine:3.20 + apk add sqlite) so we don't need sqlite3
-# on the host — same pattern Ensure-AutheliaUser uses for argon2.
+# on the host - same pattern Ensure-AutheliaUser uses for argon2.
 # ---------------------------------------------------------------------------
 function Ensure-HeimdallTiles {
     param([string]$TileDomain = '')
 
     $dbPath = Join-Path $ProjectRoot 'persistent-storage/do-not-delete/heimdall/config/www/app.sqlite'
     if (-not (Test-Path $dbPath -PathType Leaf)) {
-        Dim '  Heimdall DB not present yet — tile rewrite will run after first heimdall boot.'
+        Dim '  Heimdall DB not present yet - tile rewrite will run after first heimdall boot.'
         return
     }
 
@@ -3237,7 +3237,7 @@ function Ensure-HeimdallTiles {
     $count = 0
     [int]::TryParse(($probeRaw.Trim() -split "`n" | Select-Object -Last 1).Trim(), [ref]$count) | Out-Null
     if ($count -eq 0) {
-        Dim '  Heimdall tiles already customized — leaving them alone.'
+        Dim '  Heimdall tiles already customized - leaving them alone.'
         return
     }
 
@@ -3305,7 +3305,7 @@ function Ensure-EnvSecrets {
         @{ Key='PROWLARR_API_KEY';               Bytes=16; Mode='hex' }
         @{ Key='SEERR_API_KEY';                  Bytes=16; Mode='hex' }
         @{ Key='HERMES_API_KEY';                 Bytes=16; Mode='hex' }
-        # JELLYFIN_ADMIN_PASSWORD intentionally omitted — see Default Credentials policy.
+        # JELLYFIN_ADMIN_PASSWORD intentionally omitted - see Default Credentials policy.
     )
     $changed = $false
     foreach ($s in $genSpecs) {
@@ -3354,7 +3354,7 @@ function Start-Stack {
     # land in Jellyfin's library, Sonarr/Radarr import into Jellyfin's
     # paths, and the wizard's Step 6 configurator waits on Sonarr/Radarr/
     # Prowlarr/qBittorrent regardless of which media profile was picked.
-    # So if the user has either one, expand to include both — otherwise
+    # So if the user has either one, expand to include both - otherwise
     # picking just "MEDIA STREAMING STACK" starts jellyfin/navidrome/immich
     # but then hangs forever on "Waiting for Sonarr to come up..."
     if ($Profiles -contains 'media-stream' -and $Profiles -notcontains 'media-request') {
@@ -3396,7 +3396,7 @@ function Start-Stack {
     }
 
     # ----------------------------------------------------------------
-    # PHASE 1 — `docker compose pull`. Plain, traditional output;
+    # PHASE 1 - `docker compose pull`. Plain, traditional output;
     # let compose handle parallelism, retries, and progress display.
     # The previous custom pull pool was occasionally getting stuck on
     # transient cloudflare blips with no clean recovery path.
@@ -3440,7 +3440,7 @@ function Start-Stack {
     Ok 'Images ready.'
 
     # ----------------------------------------------------------------
-    # PHASE 2 — bring containers up with the now-cached images.
+    # PHASE 2 - bring containers up with the now-cached images.
     # ----------------------------------------------------------------
     G ''
     G  '  [2/2] Starting containers...'
@@ -3448,7 +3448,7 @@ function Start-Stack {
 
     # Per-event filter. Compose emits each container's lifecycle as
     # 4-6 lines (Creating, Created, Starting, Started, [Healthy]); we
-    # collapse that to ONE line per container — first terminal state
+    # collapse that to ONE line per container - first terminal state
     # only. Healthy follow-ups are dropped because the container is
     # already counted as up, and counting both inflates the progress
     # number x2.
@@ -3497,7 +3497,7 @@ function Get-OllamaGpuMode {
     # macOS: Docker Desktop's Linux VM can't reach Metal, so containerised
     # Ollama is always CPU. But if the user has Ollama running NATIVELY on
     # the host (brew install / ollama.app), we can detect that and default
-    # to 'native' mode — Open WebUI / LDR / Vane will be repointed at
+    # to 'native' mode - Open WebUI / LDR / Vane will be repointed at
     # host.docker.internal:11434 so they get Metal-accelerated inference.
     if ($OS -eq 'Mac') {
         try {
@@ -3521,7 +3521,7 @@ function Get-OllamaGpuMode {
         } catch {}
     }
 
-    # AMD ROCm (Linux only — Docker Desktop on Windows doesn't expose AMD).
+    # AMD ROCm (Linux only - Docker Desktop on Windows doesn't expose AMD).
     if ($OS -eq 'Linux' -and (Test-Path '/dev/kfd')) { return 'amd' }
 
     return 'cpu'
@@ -3739,23 +3739,23 @@ function Install-FirstLlm {
     # Image-awareness: only print the header + wait for Ollama if there's
     # actually something to install. When both starters are already pulled
     # (re-run scenario) we'd otherwise spend 30-90s waiting for the Ollama
-    # API just to print "already installed — skipping" twice.
+    # API just to print "already installed - skipping" twice.
     $needed = @()
     if (Wait-Ollama -TimeoutSeconds 5) {
         foreach ($m in $starters) {
             if (-not (Test-OllamaModelInstalled -Tag $m.Tag)) { $needed += $m.Tag }
         }
     } else {
-        # Ollama not up yet — assume nothing is installed and let the
+        # Ollama not up yet - assume nothing is installed and let the
         # full path below wait for it. This is the fresh-install case.
         $needed = $starters | ForEach-Object { $_.Tag }
     }
     if ($needed.Count -eq 0) {
-        Dim "  Starter LLMs already installed (both models present) — skipping."
+        Dim "  Starter LLMs already installed (both models present) - skipping."
         return
     }
 
-    Step 'Step 5 — Starter LLMs' 'Auto-installing two recommended models so you have something to chat with out of the box. This may take a few minutes per model (~5 GB each).'
+    Step 'Step 5 - Starter LLMs' 'Auto-installing two recommended models so you have something to chat with out of the box. This may take a few minutes per model (~5 GB each).'
 
     if (-not (Wait-Ollama -TimeoutSeconds 90)) {
         Err 'Ollama is not responding on http://127.0.0.1:11434. Skipping model install.'
@@ -3773,7 +3773,7 @@ function Install-FirstLlm {
         Dim '  ----------------------------------------------------------------'
 
         if (Test-OllamaModelInstalled -Tag $m.Tag) {
-            Ok "$($m.Tag) already installed — skipping."
+            Ok "$($m.Tag) already installed - skipping."
             continue
         }
 
@@ -3824,14 +3824,14 @@ function Show-Summary {
         $gpuLabel = switch ($Result.GpuMode) {
             'nvidia' { 'NVIDIA GPU (CUDA, in-container Ollama)' }
             'amd'    { 'AMD GPU (ROCm, in-container Ollama)' }
-            'native' { 'NATIVE Ollama on macOS (Metal) — in-container ollama disabled' }
+            'native' { 'NATIVE Ollama on macOS (Metal) - in-container ollama disabled' }
             default  { 'CPU only (in-container Ollama)' }
         }
         Dim "  GPU mode    : $gpuLabel"
     }
     G ''
     G '  Open these in your browser:'
-    Dim '  (*.localhost auto-resolves to 127.0.0.1 in every modern browser —'
+    Dim '  (*.localhost auto-resolves to 127.0.0.1 in every modern browser -'
     Dim '   Caddy on :80 proxies each subdomain to the right container.)'
     G ''
     G '    Heimdall (start page)   http://hub.localhost'
@@ -3947,7 +3947,7 @@ function Show-Summary {
     G  '      Seerr              admin / admin   (signs in via Jellyfin)'
     G  '      qBittorrent        admin / adminadmin   (v5 requires >=6 chars)'
     G  '      Authelia           admin / admin   (tunnel-mode SSO gate)'
-    Dim '    First-visit signup — type admin / admin when prompted:'
+    Dim '    First-visit signup - type admin / admin when prompted:'
     G  '      Portainer          admin / admin   (asks on first visit)'
     G  '      Filebrowser        admin / admin   (default)'
     if ($Result.HasMedia) {
@@ -3963,7 +3963,7 @@ function Show-Summary {
     if ($Result.UseTunnel) {
         G  ''
         Dim '    [!] Tunnel mode is ON. Change Authelia + Jellyfin + Seerr + qBittorrent'
-        Dim '        passwords NOW — these are reachable from the public internet via Cloudflare.'
+        Dim '        passwords NOW - these are reachable from the public internet via Cloudflare.'
     }
     Dim '  ------------------------------------------------------------'
     G ''
@@ -4006,7 +4006,7 @@ $state  = Read-State
 $envMap = Read-EnvFile $EnvFile
 
 # -----------------------------------------------------------------------------
-# Branch 0: -EditMediaPaths — invoked by the HOMELAB-MANAGER launchers when
+# Branch 0: -EditMediaPaths - invoked by the HOMELAB-MANAGER launchers when
 # the user picks [6] Edit Media Folders. Standalone editor + validator for
 # the 5 host paths the media stack bind-mounts. Doesn't touch anything else.
 # -----------------------------------------------------------------------------
@@ -4016,7 +4016,7 @@ if ($EditMediaPaths) {
 }
 
 # -----------------------------------------------------------------------------
-# Branch -1: -Backup — manager menu's "Backup the stack now". Dumps images +
+# Branch -1: -Backup - manager menu's "Backup the stack now". Dumps images +
 # volumes + persistent-storage into a portable folder and exits.
 # -----------------------------------------------------------------------------
 if ($Backup) {
@@ -4025,7 +4025,7 @@ if ($Backup) {
 }
 
 # -----------------------------------------------------------------------------
-# Branch -2: -Restore — manager menu's "Restore from a backup folder".
+# Branch -2: -Restore - manager menu's "Restore from a backup folder".
 # Loads images + volumes + persistent-storage from a folder and starts.
 # -----------------------------------------------------------------------------
 if ($Restore) {
@@ -4046,7 +4046,7 @@ if ($Restore) {
 }
 
 # -----------------------------------------------------------------------------
-# Branch A: -StartOnly — invoked by the HOMELAB-MANAGER launchers when the
+# Branch A: -StartOnly - invoked by the HOMELAB-MANAGER launchers when the
 # user picks [2] Start Stack.
 # SELF-HEALING. Every step that the first-run wizard does (without the
 # interactive prompts) runs here too, so the stack comes up cleanly even
@@ -4115,7 +4115,7 @@ if ($StartOnly) {
     Ok 'Rendered Caddy / Authelia / SearXNG config from templates.'
 
     # 5b. Rewrite Heimdall start-page tile URLs from the maintainer's
-    #     placeholders to whatever the user picked in Step 2b. Idempotent —
+    #     placeholders to whatever the user picked in Step 2b. Idempotent -
     #     no-ops once the placeholders are gone, so this is safe in -StartOnly.
     Ensure-HeimdallTiles -TileDomain $envMap['HEIMDALL_TILE_DOMAIN']
 
@@ -4172,14 +4172,14 @@ if ($StartOnly) {
 }
 
 # -----------------------------------------------------------------------------
-# Branch B: full first-run wizard — invoked by the HOMELAB-MANAGER launchers
+# Branch B: full first-run wizard - invoked by the HOMELAB-MANAGER launchers
 # when the user picks [1] First-Run Setup.
 # -----------------------------------------------------------------------------
 $result = Invoke-Wizard
 
 # Step 0 may have short-circuited the wizard with a successful restore.
 # Re-read .env + state from the restored files, render templates, and
-# go straight to compose-up — no question loop, no secret regeneration.
+# go straight to compose-up - no question loop, no secret regeneration.
 if ($result -and $result.PSObject.Properties['Restored'] -and $result.Restored) {
     $envMap   = Read-EnvFile $EnvFile
     $state    = Read-State
@@ -4220,10 +4220,10 @@ $stateBlob.gpuMode        = $result.GpuMode
 $stateBlob.configured     = $true
 
 # Post-wizard setup. Each step prints a marker so the user can see where
-# things are between "Secrets generated" and the compose pull/up phase —
+# things are between "Secrets generated" and the compose pull/up phase -
 # Ensure-AutheliaUser in particular can take 30-60s on a fresh install
 # because it pulls the authelia image to compute the argon2 hash.
-Step 'Step 5 — Preparing the stack' 'Rendering configs, fixing bind paths, generating Authelia hash, pre-seeding *arr and Hermes Agent. No questions — just stuff happening.'
+Step 'Step 5 - Preparing the stack' 'Rendering configs, fixing bind paths, generating Authelia hash, pre-seeding *arr and Hermes Agent. No questions - just stuff happening.'
 Repair-BindPaths
 Ok 'Bind paths verified.'
 Render-Templates -Env $result.Env -StateBlob $stateBlob
@@ -4262,7 +4262,7 @@ Show-Summary -Result $result
 if (-not $NoStart) {
     G ''
     Step 'Final touches' 'One-click access for next time.'
-    # 1. Auto-open Heimdall — works for both local-only (hub.localhost) and
+    # 1. Auto-open Heimdall - works for both local-only (hub.localhost) and
     #    tunnel mode (hub.<DOMAIN>); falls back to the direct port if Caddy
     #    isn't part of the picked stack for some reason.
     $heimdallUrl = if ($result.UseTunnel -and $result.Env['DOMAIN']) {

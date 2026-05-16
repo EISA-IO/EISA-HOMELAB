@@ -193,10 +193,10 @@ echo   EISA HOMELAB ULTIMATE - Backup / Restore
 echo  ============================================================
 echo.
 echo   Backup:
-echo   [1] Backup everything           (identical clone — restore skips the wizard)
-echo   [2] Backup images + volumes     (no .env — wizard runs fresh on restore)
-echo   [3] Backup images only          (offline image cache — wizard runs)
-echo   [4] Backup volumes only         (user data only, no images — wizard runs)
+echo   [1] Backup everything           (identical clone - restore skips the wizard)
+echo   [2] Backup images + volumes     (no .env - wizard runs fresh on restore)
+echo   [3] Backup images only          (offline image cache - wizard runs)
+echo   [4] Backup volumes only         (user data only, no images - wizard runs)
 echo.
 echo   Restore:
 echo   [5] Restore from a backup folder
@@ -229,7 +229,7 @@ if not exist "%SETUP_PS1%" (
 if "!BMODE!"=="full"           echo   Dumps every Docker image + named volume + persistent-
 if "!BMODE!"=="full"           echo   storage + .env + state into a portable folder. Restoring
 if "!BMODE!"=="full"           echo   on a different PC/Mac brings the stack up identically with
-if "!BMODE!"=="full"           echo   the same configs and secrets — first-run wizard is skipped.
+if "!BMODE!"=="full"           echo   the same configs and secrets - first-run wizard is skipped.
 if "!BMODE!"=="full"           echo   Will offer to stop the stack first for a clean snapshot.
 if "!BMODE!"=="images-volumes" echo   Saves images + named volumes + persistent-storage, but
 if "!BMODE!"=="images-volumes" echo   NOT .env / state. Recipient runs the first-run wizard

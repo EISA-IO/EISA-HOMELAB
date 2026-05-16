@@ -23,7 +23,7 @@
 #     service excluded.
 #   - `!override`s open-webui/local-deep-research/vane `depends_on` so the
 #     missing ollama doesn't block them from starting.
-#   - Repoints those three at http://host.docker.internal:11434 — Docker
+#   - Repoints those three at http://host.docker.internal:11434 - Docker
 #     Desktop on Mac maps that hostname to the host loopback automatically,
 #     so they reach the Mac-native Ollama serving on port 11434 via Metal.
 #
