@@ -3221,14 +3221,14 @@ function Start-Stack {
     }
 
     # ----------------------------------------------------------------
-    # PHASE 1 — parallel pull via compose, OWN-rendered progress.
-    # Strategy: kick off `docker compose pull --quiet` in the background
-    # (parallel, full bandwidth), then in this thread poll
-    # `docker image ls` every 3 seconds to detect which of the missing
-    # images have appeared locally. Each appearance becomes a clean
-    # "[N/M] ✓ image" line in real time. While images are still in
-    # flight we emit a heartbeat showing how many remain — predictable
-    # cadence so the user never doubts there's progress.
+    # PHASE 1 — bounded-parallel `docker pull` pool (3 at a time).
+    # Strategy: maintain a fixed-size pool of background `docker pull`
+    # processes. Each pulled image gets ~bandwidth/3 instead of
+    # ~bandwidth/N — home internet (where N is large) was getting
+    # split too thin and none of the 11+ parallel pulls progressed.
+    # As each pool slot finishes, the next queued image fills it.
+    # Heartbeat every 10s shows currently-downloading short names +
+    # queue depth, so the screen never goes static and never spams.
     # ----------------------------------------------------------------
     $imgStatus = Get-StackImageStatus -Profiles $Profiles -CustomServices $CustomServices -GpuMode $GpuMode
     $missing   = @($imgStatus.Missing)
@@ -3240,101 +3240,100 @@ function Start-Stack {
     } elseif ($declared.Count -eq 0) {
         Dim '  [1/2] Could not enumerate declared images — falling back to compose pull during up phase.'
     } else {
-        $total = $missing.Count
+        $total    = $missing.Count
+        $poolSize = 3   # concurrent docker pulls; tuned for home internet
         G  "  [1/2] Pulling $total missing image(s) of $($declared.Count) total..."
-        Dim '  Parallel download via compose. Heartbeat every 3s. Each image ticks ✓ as it lands locally.'
+        Dim "  Pool of $poolSize parallel downloads. Heartbeat every 10s shows what's in flight."
         G  ''
 
-        # Build compose pull arglist mirroring the same context as up.
-        $pullArgs = @('compose','-f','docker-compose.yml')
-        switch ($GpuMode) {
-            'nvidia' { $pullArgs += @('-f','docker-compose.nvidia.yml') }
-            'amd'    { $pullArgs += @('-f','docker-compose.amd.yml') }
-            'native' { $pullArgs += @('-f','docker-compose.ollama-native.yml') }
-        }
-        if ($CustomServices -and $CustomServices.Count -gt 0) {
-            $pullArgs += @('--progress','quiet','pull','--policy','missing','--include-deps') + $CustomServices
-        } else {
-            foreach ($p in $Profiles) { $pullArgs += @('--profile', $p) }
-            if ($UseTunnel) { $pullArgs += @('--profile','tunnel') }
-            $pullArgs += @('--progress','quiet','pull','--policy','missing','--include-deps')
-        }
+        $queue    = [System.Collections.Generic.Queue[string]]::new()
+        foreach ($img in $missing) { $queue.Enqueue($img) }
+        $inFlight  = @{}  # name -> @{ Proc; LogFile; StartedAt }
+        $completed = @{}
+        $failed    = @()
+        $sw        = [System.Diagnostics.Stopwatch]::StartNew()
 
-        $logFile = [IO.Path]::GetTempFileName()
-        try {
-            # All compose output discarded — we use docker image ls polling
-            # for state. Errors captured to the log for diagnosis on failure.
-            $proc = Start-Process -FilePath 'docker' -ArgumentList $pullArgs `
+        function Start-OnePull {
+            param([string]$Image)
+            $log  = [IO.Path]::GetTempFileName()
+            $proc = Start-Process -FilePath 'docker' -ArgumentList @('pull', $Image) `
                 -NoNewWindow -PassThru `
                 -RedirectStandardOutput 'NUL' `
-                -RedirectStandardError  $logFile
+                -RedirectStandardError  $log
+            return @{ Proc = $proc; LogFile = $log; StartedAt = [datetime]::Now }
+        }
 
-            $sw           = [System.Diagnostics.Stopwatch]::StartNew()
-            $seenAsLocal  = @{}
-            $lastTickSec  = -3
-            while (-not $proc.HasExited) {
-                Start-Sleep -Milliseconds 500
-                # On every iteration check for newly-completed images.
-                $localNow = @{}
-                & docker image ls --format '{{.Repository}}:{{.Tag}}' 2>$null | ForEach-Object {
-                    if ($_) { $localNow[$_] = $true }
-                }
-                foreach ($img in $missing) {
-                    if ($localNow.ContainsKey($img) -and -not $seenAsLocal.ContainsKey($img)) {
-                        $seenAsLocal[$img] = $true
-                        $done = $seenAsLocal.Count
-                        Write-Host ("  [{0,2}/{1,2}] ✓ {2}" -f $done, $total, $img) -ForegroundColor Green
-                    }
-                }
-                # Periodic heartbeat — only show when at least one image
-                # is still in flight, so we don't spam after they all
-                # finish before compose exits.
-                $secs = [int]$sw.Elapsed.TotalSeconds
-                $remaining = $total - $seenAsLocal.Count
-                if ($remaining -gt 0 -and $secs -ge $lastTickSec + 3) {
-                    $lastTickSec = $secs
-                    $elapsed = if ($secs -ge 60) {
-                        '{0}m{1:00}s' -f ([math]::Floor($secs/60)), ($secs % 60)
-                    } else { "${secs}s" }
-                    Write-Host ("    [{0,6}] {1} image(s) still pulling in parallel" -f $elapsed, $remaining) -ForegroundColor DarkGreen
-                }
+        # Fill the pool with the first poolSize images.
+        while ($queue.Count -gt 0 -and $inFlight.Count -lt $poolSize) {
+            $img = $queue.Dequeue()
+            $inFlight[$img] = Start-OnePull -Image $img
+        }
+
+        $lastTickSec = -10
+        while ($inFlight.Count -gt 0) {
+            Start-Sleep -Milliseconds 500
+
+            # Reap completed pulls.
+            $finishedNames = @()
+            foreach ($img in @($inFlight.Keys)) {
+                if ($inFlight[$img].Proc.HasExited) { $finishedNames += $img }
             }
-
-            # Final reconciliation after the process exits (in case the
-            # last images appeared between the last poll and exit).
-            $localFinal = @{}
-            & docker image ls --format '{{.Repository}}:{{.Tag}}' 2>$null | ForEach-Object {
-                if ($_) { $localFinal[$_] = $true }
-            }
-            foreach ($img in $missing) {
-                if ($localFinal.ContainsKey($img) -and -not $seenAsLocal.ContainsKey($img)) {
-                    $seenAsLocal[$img] = $true
-                    $done = $seenAsLocal.Count
-                    Write-Host ("  [{0,2}/{1,2}] ✓ {2}" -f $done, $total, $img) -ForegroundColor Green
-                }
-            }
-
-            $rc = $proc.ExitCode
-            $eStr = if ($sw.Elapsed.TotalSeconds -ge 60) {
-                '{0}m{1:00}s' -f ([math]::Floor($sw.Elapsed.TotalSeconds/60)), ([int]($sw.Elapsed.TotalSeconds % 60))
-            } else { '{0:N1}s' -f $sw.Elapsed.TotalSeconds }
-
-            if ($rc -ne 0) {
-                G ''
-                Err "Pull failed (exit $rc after $eStr)."
-                if (Test-Path $logFile) {
-                    foreach ($l in (Get-Content $logFile -Tail 15 -ErrorAction SilentlyContinue)) {
+            foreach ($img in $finishedNames) {
+                $info  = $inFlight[$img]
+                $rc    = $info.Proc.ExitCode
+                $durSec = ([datetime]::Now - $info.StartedAt).TotalSeconds
+                $durStr = if ($durSec -ge 60) { '{0}m{1:00}s' -f ([math]::Floor($durSec/60)), ([int]($durSec % 60)) } else { '{0:N0}s' -f $durSec }
+                if ($rc -eq 0) {
+                    $completed[$img] = $true
+                    $done = $completed.Count
+                    Write-Host ("  [{0,2}/{1,2}] ✓ {2}  ({3})" -f $done, $total, $img, $durStr) -ForegroundColor Green
+                } else {
+                    $failed += $img
+                    Write-Host ("  [!] FAILED: $img (exit $rc after $durStr)") -ForegroundColor Red
+                    foreach ($l in (Get-Content $info.LogFile -Tail 5 -ErrorAction SilentlyContinue)) {
                         Write-Host "    $l" -ForegroundColor Red
                     }
                 }
-                Err '    Check internet / registry creds, then re-run Start Stack.'
-                exit $rc
+                Remove-Item $info.LogFile -Force -ErrorAction SilentlyContinue
+                $inFlight.Remove($img)
             }
-            G ''
-            Ok "$($seenAsLocal.Count) image(s) pulled in $eStr, $($declared.Count - $total) already cached."
-        } finally {
-            Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+
+            # Replenish from the queue.
+            while ($queue.Count -gt 0 -and $inFlight.Count -lt $poolSize) {
+                $img = $queue.Dequeue()
+                $inFlight[$img] = Start-OnePull -Image $img
+            }
+
+            # Heartbeat every 10s — show short names of in-flight images
+            # and how many are still queued. Skips when nothing's running.
+            $secs = [int]$sw.Elapsed.TotalSeconds
+            if ($inFlight.Count -gt 0 -and $secs -ge $lastTickSec + 10) {
+                $lastTickSec = $secs
+                $elapsed = if ($secs -ge 60) {
+                    '{0}m{1:00}s' -f ([math]::Floor($secs/60)), ($secs % 60)
+                } else { "${secs}s" }
+                # Show last path segment of each in-flight image (compact).
+                $names = ($inFlight.Keys | ForEach-Object { ($_ -split '/')[-1] }) -join ', '
+                if ($names.Length -gt 80) { $names = $names.Substring(0,77) + '...' }
+                $tail = "  ($($queue.Count) queued)"
+                if ($queue.Count -eq 0) { $tail = '' }
+                Write-Host ("    [{0,6}] downloading: {1}{2}" -f $elapsed, $names, $tail) -ForegroundColor DarkGreen
+            }
         }
+
+        $eStr = if ($sw.Elapsed.TotalSeconds -ge 60) {
+            '{0}m{1:00}s' -f ([math]::Floor($sw.Elapsed.TotalSeconds/60)), ([int]($sw.Elapsed.TotalSeconds % 60))
+        } else { '{0:N1}s' -f $sw.Elapsed.TotalSeconds }
+
+        if ($failed.Count -gt 0) {
+            G ''
+            Err ("$($failed.Count) image(s) failed to pull after " + $eStr + ":")
+            foreach ($f in $failed) { Err "    $f" }
+            Err '    Check internet / registry creds, then re-run Start Stack.'
+            exit 1
+        }
+        G ''
+        Ok "$($completed.Count) image(s) pulled in $eStr, $($declared.Count - $total) already cached."
     }
 
     # ----------------------------------------------------------------
