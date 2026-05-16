@@ -3221,24 +3221,16 @@ function Start-Stack {
     }
 
     # ----------------------------------------------------------------
-    # PHASE 1 — pull only the images compose needs that aren't already
-    # cached locally. We invoke `docker pull <image>` ONCE per missing
-    # image (sequential), so docker's own TTY-aware progress renderer
-    # writes live progress bars directly to the console — visible
-    # activity throughout the download. Compose's batched pull buffers
-    # invisibly under a PowerShell pipeline and the wizard looks
-    # frozen for minutes during big-image downloads; sequential per-
-    # image pulls fix that with one trade-off (lose parallel-download
-    # speedup) we accept for clarity.
+    # PHASE 1 — sequential `docker pull <image>` per missing image with
+    # an OWN-rendered heartbeat (elapsed time + latest docker status)
+    # every 3 seconds. We can't rely on docker's `\r`-based in-place
+    # progress redraw because not every console host renders carriage
+    # returns as overwrites — on cmd.exe / older PowerShell hosts the
+    # download looks frozen even though it's actively transferring.
+    # Redirecting docker's stdout to a temp file and polling the tail
+    # gives us both visible cadence AND surface of docker's real
+    # per-layer progress as plain new-lines.
     # ----------------------------------------------------------------
-
-    # Image-awareness: if every declared image is already cached locally,
-    # skip the pull phase entirely. Otherwise pull each missing image
-    # SEQUENTIALLY via `docker pull <image>`, letting docker render its
-    # own live progress bars straight to the console. Compose's batched
-    # pull buffers under a PowerShell pipeline and shows nothing for
-    # minutes during big-image downloads — looks frozen. Sequential
-    # per-image pulls + raw stdout = clearly visible progression.
     $imgStatus = Get-StackImageStatus -Profiles $Profiles -CustomServices $CustomServices -GpuMode $GpuMode
     $missing   = @($imgStatus.Missing)
     $declared  = @($imgStatus.Declared)
@@ -3251,22 +3243,73 @@ function Start-Stack {
     } else {
         $total = $missing.Count
         G  "  [1/2] Pulling $total missing image(s) of $($declared.Count) total..."
-        Dim '  Each image shows docker''s own progress bars. Bigger images take longer.'
+        Dim '  Heartbeat every 3s shows elapsed time + latest layer activity. Large images can take 5-15 min on home internet.'
         G  ''
 
         $idx = 0
         foreach ($img in $missing) {
             $idx++
-            G ''
+            Write-Host ('') -NoNewline
             Write-Host ("  [{0,2}/{1,2}] {2}" -f $idx, $total, $img) -ForegroundColor Green
-            Write-Host ('  ' + ('-' * 60))
-            # Run docker pull with output going DIRECTLY to console (no
-            # pipeline) so its TTY-aware progress renderer works.
-            & docker pull $img
-            if ($LASTEXITCODE -ne 0) {
-                Err "    Pull failed for $img (exit $LASTEXITCODE)."
-                Dim '    Check internet / registry creds, then re-run Start Stack.'
-                exit $LASTEXITCODE
+            $logFile = [IO.Path]::GetTempFileName()
+            try {
+                $proc = Start-Process -FilePath 'docker' -ArgumentList @('pull', $img) `
+                    -NoNewWindow -PassThru `
+                    -RedirectStandardOutput $logFile `
+                    -RedirectStandardError  "$logFile.err"
+                $sw          = [System.Diagnostics.Stopwatch]::StartNew()
+                $lastTickSec = -3   # so the first heartbeat fires immediately
+                while (-not $proc.HasExited) {
+                    Start-Sleep -Milliseconds 500
+                    $secs = [int]$sw.Elapsed.TotalSeconds
+                    if ($secs -ge $lastTickSec + 3) {
+                        $lastTickSec = $secs
+                        # Show downloaded bytes if we can read them from the
+                        # log file. Docker writes progress lines like
+                        #   "abc123: Downloading [==>  ] 12.5MB/300MB"
+                        # We grep for the largest "X.Y(K|M|G)B" tokens that
+                        # immediately precede a slash, which is reliably the
+                        # "downloaded" half of the bar. Falls back to a plain
+                        # "downloading..." marker if the file can't be read.
+                        $hint = 'downloading...'
+                        try {
+                            $fs = [IO.File]::Open($logFile,'Open','Read','ReadWrite')
+                            try {
+                                $sr = New-Object IO.StreamReader($fs)
+                                $all = $sr.ReadToEnd()
+                                $sr.Close()
+                            } finally { $fs.Close() }
+                            $matches = [regex]::Matches($all, '\b\d+(?:\.\d+)?\s?[KMG]?B\s?/\s?\d+(?:\.\d+)?\s?[KMG]?B\b')
+                            if ($matches.Count -gt 0) {
+                                $hint = $matches[$matches.Count - 1].Value
+                            }
+                        } catch {}
+                        $elapsed = if ($secs -ge 60) { '{0}m{1:00}s' -f ([math]::Floor($secs/60)), ($secs % 60) } else { "${secs}s" }
+                        Write-Host ("    [{0,6}] {1}" -f $elapsed, $hint) -ForegroundColor DarkGreen
+                    }
+                }
+                $rc      = $proc.ExitCode
+                $elapsed = $sw.Elapsed
+                $eStr    = if ($elapsed.TotalSeconds -ge 60) {
+                    '{0}m{1:00}s' -f ([math]::Floor($elapsed.TotalSeconds/60)), ([int]($elapsed.TotalSeconds % 60))
+                } else { '{0:N1}s' -f $elapsed.TotalSeconds }
+                if ($rc -eq 0) {
+                    Write-Host ("  ✓ [{0,2}/{1,2}] Pulled {2} ({3})" -f $idx, $total, $img, $eStr) -ForegroundColor Green
+                } else {
+                    Write-Host ("  ✗ [{0,2}/{1,2}] FAILED — exit $rc after $eStr" -f $idx, $total) -ForegroundColor Red
+                    # Dump tail of error log so the user sees the cause.
+                    foreach ($f in @($logFile, "$logFile.err")) {
+                        if (Test-Path $f) {
+                            $tail = Get-Content $f -Tail 10 -ErrorAction SilentlyContinue
+                            foreach ($l in $tail) { Write-Host "    $l" -ForegroundColor Red }
+                        }
+                    }
+                    Err '    Check internet / registry creds, then re-run Start Stack.'
+                    exit $rc
+                }
+            } finally {
+                Remove-Item $logFile        -Force -ErrorAction SilentlyContinue
+                Remove-Item "$logFile.err"  -Force -ErrorAction SilentlyContinue
             }
         }
         G ''
