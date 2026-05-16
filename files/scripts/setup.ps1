@@ -3156,6 +3156,74 @@ function Start-Stack {
         $arglist += @('up','-d')
     }
 
+    # ----------------------------------------------------------------
+    # PHASE 1 — pull images first, with a clean per-image progress line.
+    # Compose's --progress plain on `up` emits one line per layer status
+    # update (Downloading 12.5MB/300MB, Extracting 3s, Verifying...) for
+    # every image, producing hundreds of nearly-identical lines per
+    # second when many images are pulling in parallel. We run a dedicated
+    # `compose pull` first and filter to only the per-service terminal
+    # "Pulled" / "Error" lines — one line per image, in completion order.
+    # The follow-up `up` then runs on cached images and stays quiet.
+    # ----------------------------------------------------------------
+    # Same context (compose files + profiles/services) as the up step:
+    # everything before the last 3 args ('up','-d', maybe service names).
+    $pullArgs = @($arglist)
+    # Drop the trailing 'up','-d' (+ optional service names) and replace
+    # with 'pull --policy missing'. Find the index of 'up' to do this
+    # surgically; service names follow it positionally.
+    $upIdx = [array]::IndexOf($pullArgs, 'up')
+    if ($upIdx -ge 0) {
+        $services = $pullArgs[($upIdx + 2)..($pullArgs.Length - 1)]   # may be @()
+        $pullArgs = @($pullArgs[0..($upIdx - 1)]) + @('pull','--policy','missing','--include-deps') + $services
+    } else {
+        $pullArgs += @('pull','--policy','missing','--include-deps')
+    }
+
+    G ''
+    G  '  Pulling images...'
+    Dim '  Compose pulls in parallel; one tick per image as it finishes.'
+    G  ''
+
+    $pulled = 0
+    $failed = 0
+    & docker @pullArgs 2>&1 | ForEach-Object {
+        $line = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
+        if ([string]::IsNullOrWhiteSpace($line)) { return }
+        # Drop per-layer progress (lines that start with a short hash).
+        if ($line -match '^\s*[0-9a-f]{8,16}\s+') { return }
+        # Drop per-service intermediate states; we only want the terminal "Pulled" / "Error".
+        if ($line -match '^\s*\S+\s+(Pulling|Extracting|Downloading|Verifying|Waiting|Already exists|Pull complete|Digest:|Status:)') { return }
+        # Drop compose's own startup "Pulling <N>/<M>" tally.
+        if ($line -match '^\s*\[\+\] Pulling\b') { return }
+        # Per-service "Pulled" — the line we want.
+        if ($line -match '^\s*(\S+)\s+Pulled\s*$') {
+            $pulled++
+            Write-Host ('  [+] Pulled ' + $matches[1]) -ForegroundColor Green
+            return
+        }
+        # Per-service error.
+        if ($line -match '^\s*(\S+)\s+(Error|Failed)') {
+            $failed++
+            Write-Host ('  [!] ' + $line.Trim()) -ForegroundColor Red
+            return
+        }
+        # Pass anything else (real errors, summary) through.
+        Write-Host $line
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Err 'docker compose pull failed — see lines above. Check your internet and registry creds.'
+        exit $LASTEXITCODE
+    }
+    if ($pulled -eq 0) {
+        Dim '  All images already cached locally — nothing new to download.'
+    } else {
+        Ok "$pulled image(s) pulled."
+    }
+
+    # ----------------------------------------------------------------
+    # PHASE 2 — bring containers up with the now-cached images.
+    # ----------------------------------------------------------------
     G ''
     Dim ("  docker " + ($arglist -join ' '))
     G ''
