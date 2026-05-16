@@ -130,6 +130,11 @@ services:
     image: filebrowser/filebrowser:v2.62.2
     container_name: filebrowser
     volumes:
+      # Claim /srv with a named volume so the filebrowser image's
+      # VOLUME /srv directive doesn't auto-create an anonymous volume
+      # on each container recreate. The sub-path bind mounts below
+      # shadow it cleanly.
+      - filebrowser_srv:/srv
       - ${MOVIES_PATH:-C:/MEDIA/Movies}:/srv/movies
       - ${TV_SHOWS_PATH:-C:/MEDIA/TV-Shows}:/srv/tv-shows
       - ${MUSIC_PATH:-C:/MEDIA/Music}:/srv/music
@@ -313,6 +318,9 @@ services:
     volumes:
       - ldr_data:/data
       - ldr_scripts:/scripts
+      # Claim /app/.config/local_deep_research so the image's VOLUME
+      # directive there doesn't auto-create an anonymous volume.
+      - ldr_config:/app/.config/local_deep_research
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ulimits:
@@ -448,6 +456,11 @@ services:
   immich-redis:
     image: docker.io/valkey/valkey:9.0.4
     container_name: immich-redis
+    # Valkey/redis writes RDB snapshots to /data. Without a volume that
+    # path lives in the container's writable layer — every recreate
+    # wipes the cache. Named volume keeps it persistent across restarts.
+    volumes:
+      - immich_redis_data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping || exit 1"]
       interval: 10s
@@ -628,10 +641,13 @@ volumes:
   jellyfin_cache:
   filebrowser_database:
   filebrowser_config:
+  filebrowser_srv:
   searxng_cache:
   ldr_data:
   ldr_scripts:
+  ldr_config:
   immich_model_cache:
+  immich_redis_data:
   vane_data:
 
 networks:
