@@ -1878,11 +1878,25 @@ function Ensure-AutheliaUser {
         return
     }
 
-    Dim '  Generating Authelia admin argon2 hash (may pull authelia image first)...'
     # Default Credentials policy: admin / admin everywhere we control auth.
     # Tunnel-mode users should change this from the Authelia UI after first
     # login — Authelia is the public-internet gate when DOMAIN is set.
     $password = 'admin'
+    # On a fresh install this `docker run` first PULLS the authelia image
+    # (~80 MB, can take 30-60s) and then computes the argon2id hash
+    # (deliberately slow by design, ~1-2s). Both are silent — so the user
+    # would see no output for up to a minute. Pre-flight by pulling the
+    # image with our normal pull-progress filter, then run the hash.
+    $haveAuthelia = & docker image inspect authelia/authelia:latest 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Dim '  Pulling authelia image (one-off, ~80 MB) for argon2 hash generation...'
+        & docker pull --quiet authelia/authelia:latest 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Err '  authelia image pull failed — argon2 hash cannot be generated.'
+            return
+        }
+    }
+    Dim '  Generating Authelia admin argon2 hash (deliberately slow by design, ~2s)...'
     $hashOutput = (& docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password $password) 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         Err '  Authelia hash generation failed. Authelia may not start.'
@@ -3996,13 +4010,21 @@ $stateBlob.useTunnel      = $result.UseTunnel
 $stateBlob.gpuMode        = $result.GpuMode
 $stateBlob.configured     = $true
 
+# Post-wizard setup. Each step prints a marker so the user can see where
+# things are between "Secrets generated" and the compose pull/up phase —
+# Ensure-AutheliaUser in particular can take 30-60s on a fresh install
+# because it pulls the authelia image to compute the argon2 hash.
+Step 'Step 5 — Preparing the stack' 'Rendering configs, fixing bind paths, generating Authelia hash, pre-seeding *arr and Hermes Agent. No questions — just stuff happening.'
 Repair-BindPaths
+Ok 'Bind paths verified.'
 Render-Templates -Env $result.Env -StateBlob $stateBlob
+Ok 'Rendered Caddy / Authelia / SearXNG config from templates.'
 Ensure-HeimdallTiles -TileDomain $result.Env['HEIMDALL_TILE_DOMAIN']
 Pre-Seed-MediaStack -EnvMap $result.Env
 Configure-HermesAgent -EnvMap $result.Env
 Ensure-AutheliaUser -EnvMap $result.Env
 Write-State -State $stateBlob
+Ok 'Stack ready to start.'
 
 if (-not $NoStart) {
     # If the user picked NATIVE in Step 3b on Mac, install + start the host
