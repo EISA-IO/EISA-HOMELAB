@@ -35,7 +35,7 @@ services:
 
   ##########  CADDY  ##########
   caddy:
-    image: caddy:2.11.2
+    image: caddy:2.11.3
     container_name: Caddy
     restart: always
     cap_add:
@@ -58,7 +58,7 @@ services:
 
   ##########  AUTHELIA  ##########
   authelia:
-    image: authelia/authelia:4.39.16
+    image: authelia/authelia:4.39.19
     container_name: Authelia
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/authelia:/config
@@ -127,7 +127,7 @@ services:
   filebrowser:
     env_file:
       - .env
-    image: filebrowser/filebrowser:v2.62.2
+    image: filebrowser/filebrowser:v2.63.3
     container_name: filebrowser
     volumes:
       # Claim /srv with a named volume so the filebrowser image's
@@ -174,7 +174,7 @@ services:
   # N8N (Workflow automation platform)
   # ========================
   n8n-postgres:
-    image: postgres:16.13-alpine
+    image: postgres:16.14-alpine
     environment:
       - POSTGRES_USER
       - POSTGRES_PASSWORD
@@ -259,7 +259,7 @@ services:
   # ========================
   open-webui:
     env_file: .env
-    image: ghcr.io/open-webui/open-webui:0.9.2
+    image: ghcr.io/open-webui/open-webui:0.9.5
     container_name: open-webui
     volumes:
       - open-webui:/app/backend/data
@@ -390,7 +390,7 @@ services:
   searxng:
     env_file: .env
     container_name: searxng
-    image: docker.io/searxng/searxng:2026.5.13-8e5aa9d39
+    image: docker.io/searxng/searxng:2026.5.15-afafca93f
     restart: always
     ports:
       - "8031:8080"
