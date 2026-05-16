@@ -1320,14 +1320,19 @@ function Invoke-RestoreStack {
     }
 
     # 4) Restore .env + .wizard-state.json.
-    $bkEnv   = Join-Path $path '.env'
-    $bkState = Join-Path $path '.wizard-state.json'
-    if (Test-Path $bkEnv)   { Copy-Item $bkEnv   $EnvFile   -Force; Ok '.env restored.' }
+    $bkEnv     = Join-Path $path '.env'
+    $bkState   = Join-Path $path '.wizard-state.json'
+    $envRestored = $false
+    if (Test-Path $bkEnv)   { Copy-Item $bkEnv   $EnvFile   -Force; Ok '.env restored.'; $envRestored = $true }
     if (Test-Path $bkState) { Copy-Item $bkState $StateFile -Force; Ok '.wizard-state.json restored.' }
 
     G ''
-    Ok 'Restore complete. The stack will come up with the images, volumes, and settings from the backup.'
-    return $true
+    if ($envRestored) {
+        Ok 'Restore complete. The stack will come up with the images, volumes, and settings from the backup.'
+    } else {
+        Ok 'Image cache loaded from backup. (.env was not in this backup — wizard will continue so you can configure the stack.)'
+    }
+    return [pscustomobject]@{ Success = $true; EnvRestored = $envRestored }
 }
 
 # ---------------------------------------------------------------------------
@@ -1368,13 +1373,25 @@ function Invoke-Wizard {
         )
         if ($restoreChoice -eq 2) {
             # Pre-fill the restore path so the user isn't asked again.
-            if (Invoke-RestoreStack -Path $foundBackups[0].FullName) {
-                # Surface a tiny result shape so the main flow knows to skip
-                # the rest (stack-up + LLM pulls + media wiring) — restore
-                # already wrote the env + state and we just need to start.
-                return [pscustomobject]@{ Restored = $true }
+            $restoreResult = Invoke-RestoreStack -Path $foundBackups[0].FullName
+            if ($restoreResult -and $restoreResult.Success) {
+                if ($restoreResult.EnvRestored) {
+                    # Full restore: .env + state came back, the wizard has
+                    # nothing left to ask. Short-circuit straight to start.
+                    return [pscustomobject]@{ Restored = $true }
+                } else {
+                    # Images-only restore: the cache is now warm but .env
+                    # is still empty. Fall through to the regular wizard
+                    # so the user can pick stack/paths/GPU/etc., and the
+                    # subsequent compose pull will be a no-op (images
+                    # already loaded).
+                    G ''
+                    Dim '  Continuing with the wizard — your image cache is pre-populated, so the pull phase will be instant.'
+                    G ''
+                }
+            } else {
+                Dim '  Restore failed or was aborted — falling through to a clean install.'
             }
-            Dim '  Restore failed or was aborted — falling through to a clean install.'
         }
     }
 
