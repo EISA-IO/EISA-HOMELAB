@@ -452,10 +452,10 @@ do_backup_menu() {
         clear
         header "Backup / Restore"
         say "   Backup:"
-        say "   [1] Everything            (images + volumes + persistent-storage + .env)"
-        say "   [2] Images only           (docker images.tar, no user data)"
-        say "   [3] Volumes only          (volumes + persistent-storage + .env, no images)"
-        say "   [4] Images + Volumes      (no .env / state — wizard runs fresh on restore)"
+        say "   [1] Backup everything           (identical clone — restore skips the wizard)"
+        say "   [2] Backup images + volumes     (no .env — wizard runs fresh on restore)"
+        say "   [3] Backup images only          (offline image cache — wizard runs)"
+        say "   [4] Backup volumes only         (user data only, no images — wizard runs)"
         echo
         say "   Restore:"
         say "   [5] Restore from a backup folder"
@@ -465,12 +465,12 @@ do_backup_menu() {
         local choice
         read -r -p "  Select option: " choice
         case "${choice}" in
-            1) do_backup full    ;;
-            2) do_backup images  ;;
-            3) do_backup volumes ;;
-            4) do_backup no-env  ;;
-            5) do_restore        ;;
-            0) return            ;;
+            1) do_backup full           ;;
+            2) do_backup images-volumes ;;
+            3) do_backup images         ;;
+            4) do_backup volumes        ;;
+            5) do_restore               ;;
+            0) return                   ;;
         esac
     done
 }
@@ -488,26 +488,28 @@ do_backup() {
     case "${mode}" in
         full)
             echo "  Dumps every Docker image + named volume + persistent-storage"
-            echo "  bind mount + .env into a portable folder. Image tar is the"
-            echo "  heavy bit; will offer to stop the stack first for a clean"
-            echo "  volume snapshot."
+            echo "  + .env + state into a portable folder. Restoring on a"
+            echo "  different PC/Mac brings the stack up identically with the"
+            echo "  same configs and secrets — first-run wizard is skipped."
+            echo "  Will offer to stop the stack first for a clean snapshot."
+            ;;
+        images-volumes)
+            echo "  Saves images + named volumes + persistent-storage, but NOT"
+            echo "  .env / state. Recipient runs the first-run wizard fresh;"
+            echo "  secrets are regenerated, paths are re-asked. Pull phase"
+            echo "  is instant because every image is already cached."
+            echo "  Will offer to stop the stack first for a clean snapshot."
             ;;
         images)
-            echo "  Saves docker images only (no user data, no .env). Useful as"
-            echo "  an offline image cache. Stack can stay running."
+            echo "  Saves docker images only (no user data, no .env). Useful"
+            echo "  as an offline image cache; stack can stay running."
+            echo "  Restore runs the wizard normally; pull phase is instant."
             ;;
         volumes)
-            echo "  Saves named volumes + persistent-storage + .env, no images."
-            echo "  Smaller and faster; restore will re-pull images from"
-            echo "  registries. Will offer to stop the stack first for a clean"
-            echo "  volume snapshot."
-            ;;
-        no-env)
-            echo "  Saves images + named volumes + persistent-storage, but NOT"
-            echo "  .env or state. Good for cloning your setup to another"
-            echo "  machine without shipping your secrets — the recipient runs"
-            echo "  the first-run wizard with the image + volume cache already"
-            echo "  populated. Stack will be stopped for a clean snapshot."
+            echo "  Saves named volumes + persistent-storage, no images, no"
+            echo "  .env. Restore runs the wizard normally and compose"
+            echo "  re-pulls every image from its registry (the slow part)."
+            echo "  Will offer to stop the stack first for a clean snapshot."
             ;;
     esac
     echo "  ----------------------------------------------------------------"

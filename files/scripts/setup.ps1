@@ -29,8 +29,8 @@ param(
     [switch]$EditMediaPaths, # standalone editor for MOVIES_PATH / TV_SHOWS_PATH / MUSIC_PATH / DOWNLOADS_PATH / PHOTOS_PATH
     [switch]$Backup,         # save images + named volumes + persistent-storage + .env to a portable folder
     [string]$BackupPath,     # destination folder for -Backup (default: <repoRoot>\backups\eisa-homelab-backup-<timestamp>)
-    [ValidateSet('','full','images','volumes','no-env')]
-    [string]$BackupMode = '', # what to include in -Backup: full | images | volumes | no-env (prompts if blank)
+    [ValidateSet('','full','images-volumes','images','volumes')]
+    [string]$BackupMode = '', # what to include in -Backup: full | images-volumes | images | volumes (prompts if blank)
     [switch]$Restore,        # load images + volumes + persistent-storage from a backup folder, then start
     [string]$RestorePath     # source folder for -Restore (prompted if not supplied)
 )
@@ -1033,7 +1033,7 @@ function Get-LocalBackupFolders {
 
 function Invoke-BackupStack {
     param(
-        [ValidateSet('','full','images','volumes','no-env')]
+        [ValidateSet('','full','images-volumes','images','volumes')]
         [string]$Mode = ''
     )
     $repoRoot = Split-Path $ProjectRoot -Parent
@@ -1044,66 +1044,67 @@ function Invoke-BackupStack {
 
     Step 'Backup EISA Homelab' "Destination: $BackupPath"
 
-    # Mode picker: full | images | volumes | no-env. Skipped when the
-    # caller already passed -Mode / -BackupMode (e.g. from a scripted
-    # invocation).
+    # Mode picker. Only 'full' bundles .env + state, so only 'full'
+    # short-circuits the first-run wizard on restore. The other three
+    # modes always let the wizard run through normally; the cached
+    # artifacts (images / volumes / both) just make it faster.
     if (-not $Mode) {
         Dim '  What to include in this backup?'
         G  ''
         $modePick = Ask-Choice @(
             [pscustomobject]@{
-                Label = 'Everything (recommended)'
+                Label = 'Backup everything       (identical clone to another PC/Mac)'
                 Hint  = @(
-                    'images.tar + named volumes + persistent-storage + .env'
-                    'Largest file, fully self-contained restore.'
-                    'On restore: wizard short-circuits, stack just starts.'
+                    'images + named volumes + persistent-storage + .env + state.'
+                    'On restore: wizard is SKIPPED, stack starts with the saved'
+                    'config — identical to the source machine.'
                 )
             }
             [pscustomobject]@{
-                Label = 'Images only'
+                Label = 'Backup images + volumes (no .env — wizard runs fresh)'
                 Hint  = @(
-                    'Just images.tar — docker save of every stack image.'
-                    'Use as an offline image cache; no user data included.'
-                    'On restore: wizard runs normally, pull phase is instant.'
-                )
-            }
-            [pscustomobject]@{
-                Label = 'Volumes only'
-                Hint  = @(
-                    'Named volumes + persistent-storage + .env — no images.'
-                    'Smaller + faster; restore will re-pull images.'
-                    'On restore: wizard short-circuits, stack just starts.'
-                )
-            }
-            [pscustomobject]@{
-                Label = 'Images + Volumes  (no .env, wizard runs fresh)'
-                Hint  = @(
-                    'images.tar + volumes + persistent-storage. NO .env / state.'
-                    'Good for cloning your setup to another machine without'
-                    'shipping your secrets — recipient runs the wizard fresh.'
-                    'Warning: regenerated secrets break n8n encrypted workflows'
+                    'images + named volumes + persistent-storage. NO .env / state.'
+                    'On restore: first-run wizard runs normally; secrets are'
+                    'regenerated, paths are re-asked. Compose pull is instant'
+                    'because every image is already in the cache.'
+                    'Caveat: regenerated secrets break n8n encrypted workflows'
                     'in postgres if you keep the n8n volume.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'Backup images only'
+                Hint  = @(
+                    'Just images.tar (no user data, no secrets).'
+                    'On restore: wizard runs normally; compose pull is instant.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'Backup volumes only'
+                Hint  = @(
+                    'Named volumes + persistent-storage. NO images, NO .env.'
+                    'On restore: wizard runs normally; compose re-pulls every'
+                    'image from its registry (the slow part).'
                 )
             }
         )
         $Mode = switch ($modePick) {
             1 { 'full' }
-            2 { 'images' }
-            3 { 'volumes' }
-            4 { 'no-env' }
+            2 { 'images-volumes' }
+            3 { 'images' }
+            4 { 'volumes' }
         }
         G ''
     }
 
-    $doImages  = $Mode -in @('full','images','no-env')
-    $doVolumes = $Mode -in @('full','volumes','no-env')   # named volumes + persistent-storage
-    $doEnv     = $Mode -in @('full','volumes')            # .env + .wizard-state.json
+    $doImages  = $Mode -in @('full','images-volumes','images')
+    $doVolumes = $Mode -in @('full','images-volumes','volumes')   # named volumes + persistent-storage
+    $doEnv     = $Mode -eq 'full'                                 # .env + state — only the full clone keeps these
 
     $modeDesc = @{
-        'full'    = 'images + volumes + persistent-storage + .env'
-        'images'  = 'just docker images.tar'
-        'volumes' = 'volumes + persistent-storage + .env (no images)'
-        'no-env'  = 'images + volumes + persistent-storage (no .env / state)'
+        'full'           = 'images + volumes + persistent-storage + .env + state'
+        'images-volumes' = 'images + volumes + persistent-storage (no .env / state)'
+        'images'         = 'just docker images.tar'
+        'volumes'        = 'volumes + persistent-storage (no images, no .env)'
     }[$Mode]
     Dim "  Mode: $Mode — $modeDesc"
     if ($doVolumes) {
