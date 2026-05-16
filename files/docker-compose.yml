@@ -288,11 +288,12 @@ services:
   # call http://ollama:11434/v1.
   #
   # Image pinned per upstream Docker Hub: nousresearch/hermes-agent
-  # CI builds rolling sha-<full-sha> + v<date> tags. v2026.5.7 is the
-  # latest released image as of 2026-05.
+  # CI builds rolling sha-<full-sha> + v<date> tags. v2026.5.16 is the
+  # latest released image as of 2026-05-16 (upstream GitHub release
+  # name: Hermes Agent v0.14.0).
   # ========================
   hermes-agent:
-    image: nousresearch/hermes-agent:v2026.5.7
+    image: nousresearch/hermes-agent:v2026.5.16
     container_name: hermes-agent
     env_file: .env
     environment:
