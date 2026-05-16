@@ -3221,39 +3221,24 @@ function Start-Stack {
     }
 
     # ----------------------------------------------------------------
-    # PHASE 1 — pull images first, with a clean per-image progress line.
-    # Compose's --progress plain on `up` emits one line per layer status
-    # update (Downloading 12.5MB/300MB, Extracting 3s, Verifying...) for
-    # every image, producing hundreds of nearly-identical lines per
-    # second when many images are pulling in parallel. We run a dedicated
-    # `compose pull` first and filter to only the per-service terminal
-    # "Pulled" / "Error" lines — one line per image, in completion order.
-    # The follow-up `up` then runs on cached images and stays quiet.
+    # PHASE 1 — pull only the images compose needs that aren't already
+    # cached locally. We invoke `docker pull <image>` ONCE per missing
+    # image (sequential), so docker's own TTY-aware progress renderer
+    # writes live progress bars directly to the console — visible
+    # activity throughout the download. Compose's batched pull buffers
+    # invisibly under a PowerShell pipeline and the wizard looks
+    # frozen for minutes during big-image downloads; sequential per-
+    # image pulls fix that with one trade-off (lose parallel-download
+    # speedup) we accept for clarity.
     # ----------------------------------------------------------------
-    # Same context (compose files + profiles/services) as the up step:
-    # everything before the last 3 args ('up','-d', maybe service names).
-    $pullArgs = @($arglist)
-    # Drop the trailing 'up','-d' (+ optional service names) and replace
-    # with 'pull --policy missing'. Find the index of 'up' to do this
-    # surgically; service names follow it positionally.
-    $upIdx = [array]::IndexOf($pullArgs, 'up')
-    if ($upIdx -ge 0) {
-        # Service tail (positional args after `up -d`). Guard the slice:
-        # in PowerShell `arr[(n+2)..(len-1)]` becomes a REVERSED range
-        # when n+2 > len-1 (i.e. when there's no tail), which would
-        # pick up `-d` and feed it to `compose pull` → "unknown flag -d".
-        $tail = @()
-        if ($pullArgs.Length -gt ($upIdx + 2)) {
-            $tail = $pullArgs[($upIdx + 2)..($pullArgs.Length - 1)]
-        }
-        $pullArgs = @($pullArgs[0..($upIdx - 1)]) + @('pull','--policy','missing','--include-deps') + $tail
-    } else {
-        $pullArgs += @('pull','--policy','missing','--include-deps')
-    }
 
     # Image-awareness: if every declared image is already cached locally,
-    # skip the compose pull invocation entirely. Saves the ~5-10s compose
-    # spends iterating "Skipped" messages for every cached image.
+    # skip the pull phase entirely. Otherwise pull each missing image
+    # SEQUENTIALLY via `docker pull <image>`, letting docker render its
+    # own live progress bars straight to the console. Compose's batched
+    # pull buffers under a PowerShell pipeline and shows nothing for
+    # minutes during big-image downloads — looks frozen. Sequential
+    # per-image pulls + raw stdout = clearly visible progression.
     $imgStatus = Get-StackImageStatus -Profiles $Profiles -CustomServices $CustomServices -GpuMode $GpuMode
     $missing   = @($imgStatus.Missing)
     $declared  = @($imgStatus.Declared)
@@ -3261,61 +3246,31 @@ function Start-Stack {
     G ''
     if ($missing.Count -eq 0 -and $declared.Count -gt 0) {
         Ok "[1/2] All $($declared.Count) image(s) already cached locally — skipping pull."
-        $pulled  = 0
-        $skipped = $declared.Count
-        # Fall through to phase 2.
+    } elseif ($declared.Count -eq 0) {
+        Dim '  [1/2] Could not enumerate declared images — falling back to compose pull during up phase.'
     } else {
-        if ($missing.Count -gt 0) {
-            G "  [1/2] Pulling $($missing.Count) missing image(s) of $($declared.Count) total..."
-        } else {
-            G '  [1/2] Pulling images...'
-        }
+        $total = $missing.Count
+        G  "  [1/2] Pulling $total missing image(s) of $($declared.Count) total..."
+        Dim '  Each image shows docker''s own progress bars. Bigger images take longer.'
         G  ''
 
-        $pulled  = 0
-        $skipped = 0
-        $failed  = 0
-        & docker @pullArgs 2>&1 | ForEach-Object {
-        $line = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { [string]$_ }
-        if ([string]::IsNullOrWhiteSpace($line)) { return }
-        # Drop per-layer progress (lines that start with a short hash).
-        if ($line -match '^\s*[0-9a-f]{8,16}\s+') { return }
-        # Drop per-service intermediate states + the "Skipped - already
-        # present locally" lines (which would otherwise produce a wall of
-        # noise on every re-run of Start Stack).
-        if ($line -match '^\s*\S+\s+(Pulling|Extracting|Downloading|Verifying|Waiting|Already exists|Pull complete|Digest:|Status:)') { return }
-        if ($line -match '^\s*(\S+)\s+Skipped\b') {
-            $skipped++
-            return
+        $idx = 0
+        foreach ($img in $missing) {
+            $idx++
+            G ''
+            Write-Host ("  [{0,2}/{1,2}] {2}" -f $idx, $total, $img) -ForegroundColor Green
+            Write-Host ('  ' + ('-' * 60))
+            # Run docker pull with output going DIRECTLY to console (no
+            # pipeline) so its TTY-aware progress renderer works.
+            & docker pull $img
+            if ($LASTEXITCODE -ne 0) {
+                Err "    Pull failed for $img (exit $LASTEXITCODE)."
+                Dim '    Check internet / registry creds, then re-run Start Stack.'
+                exit $LASTEXITCODE
+            }
         }
-        # Drop compose's own startup "Pulling <N>/<M>" tally.
-        if ($line -match '^\s*\[\+\] Pulling\b') { return }
-        # Per-service "Pulled" — the line we want.
-        if ($line -match '^\s*(\S+)\s+Pulled\s*$') {
-            $pulled++
-            Write-Host ('  [{0,2}] Pulled {1}' -f $pulled, $matches[1]) -ForegroundColor Green
-            return
-        }
-        # Per-service error.
-        if ($line -match '^\s*(\S+)\s+(Error|Failed)') {
-            $failed++
-            Write-Host ('  [!] ' + $line.Trim()) -ForegroundColor Red
-            return
-        }
-        # Pass anything else (real errors, summary) through.
-        Write-Host $line
-    }
-        if ($LASTEXITCODE -ne 0) {
-            Err 'docker compose pull failed — see lines above. Check your internet and registry creds.'
-            exit $LASTEXITCODE
-        }
-        if ($pulled -eq 0 -and $skipped -gt 0) {
-            Dim "  $skipped image(s) already cached locally — nothing new to download."
-        } elseif ($pulled -gt 0 -and $skipped -gt 0) {
-            Ok "$pulled image(s) pulled, $skipped already cached."
-        } elseif ($pulled -gt 0) {
-            Ok "$pulled image(s) pulled."
-        }
+        G ''
+        Ok "$total image(s) pulled, $($declared.Count - $total) already cached."
     }
 
     # ----------------------------------------------------------------
