@@ -3256,11 +3256,52 @@ function Start-Stack {
         function Start-OnePull {
             param([string]$Image)
             $log  = [IO.Path]::GetTempFileName()
+            $err  = "$log.err"
+            # Redirect BOTH stdout + stderr to files. docker pull writes
+            # per-layer "Downloading X/Y" progress to stdout via \r
+            # overwrites — the file grows with every update, and we can
+            # tail it for the latest progress in our heartbeat below.
             $proc = Start-Process -FilePath 'docker' -ArgumentList @('pull', $Image) `
                 -NoNewWindow -PassThru `
-                -RedirectStandardOutput 'NUL' `
-                -RedirectStandardError  $log
-            return @{ Proc = $proc; LogFile = $log; StartedAt = [datetime]::Now }
+                -RedirectStandardOutput $log `
+                -RedirectStandardError  $err
+            return @{ Proc = $proc; LogFile = $log; ErrFile = $err; StartedAt = [datetime]::Now }
+        }
+
+        # Read a redirected docker-pull log and return per-image layer
+        # progress. When docker's stdout is redirected (not a TTY), docker
+        # SUPPRESSES per-layer "Downloading X/Y MB" progress and only emits
+        # state transitions: "Pulling fs layer", "Download complete",
+        # "Pull complete". Counting those gives a coarse but reliable
+        # signal: layers_done / layers_total ticks up as each layer
+        # finishes. Plus we return the most recent state line so the user
+        # sees exactly what docker is doing right now.
+        function Get-PullState {
+            param([string]$LogFile)
+            try {
+                if (-not (Test-Path $LogFile)) { return $null }
+                $fs = [IO.File]::Open($LogFile,'Open','Read','ReadWrite')
+                try {
+                    $sr = New-Object IO.StreamReader($fs)
+                    $content = $sr.ReadToEnd()
+                    $sr.Close()
+                } finally { $fs.Close() }
+                $totalLayers = ([regex]::Matches($content, 'Pulling fs layer')).Count
+                $doneLayers  = ([regex]::Matches($content, 'Pull complete')).Count
+                $downloaded  = ([regex]::Matches($content, 'Download complete')).Count
+                # Last non-empty line — gives the most recent docker action
+                # (e.g. "fff4e2c1: Download complete").
+                $lines = $content -split "[\r\n]+" | Where-Object { $_ -match '\S' }
+                $last  = if ($lines.Count -gt 0) { $lines[-1] } else { 'starting' }
+                # Drop the layer-hash prefix so the per-image line is compact.
+                $last = $last -replace '^[0-9a-f]{8,}\s*:\s*', ''
+                return [pscustomobject]@{
+                    Total      = $totalLayers
+                    Done       = $doneLayers
+                    Downloaded = $downloaded
+                    Last       = $last
+                }
+            } catch { return $null }
         }
 
         # Fill the pool with the first poolSize images.
@@ -3290,11 +3331,16 @@ function Start-Stack {
                 } else {
                     $failed += $img
                     Write-Host ("  [!] FAILED: $img (exit $rc after $durStr)") -ForegroundColor Red
-                    foreach ($l in (Get-Content $info.LogFile -Tail 5 -ErrorAction SilentlyContinue)) {
-                        Write-Host "    $l" -ForegroundColor Red
+                    foreach ($f in @($info.ErrFile, $info.LogFile)) {
+                        if (Test-Path $f) {
+                            foreach ($l in (Get-Content $f -Tail 5 -ErrorAction SilentlyContinue)) {
+                                Write-Host "    $l" -ForegroundColor Red
+                            }
+                        }
                     }
                 }
                 Remove-Item $info.LogFile -Force -ErrorAction SilentlyContinue
+                if ($info.ErrFile) { Remove-Item $info.ErrFile -Force -ErrorAction SilentlyContinue }
                 $inFlight.Remove($img)
             }
 
@@ -3304,20 +3350,31 @@ function Start-Stack {
                 $inFlight[$img] = Start-OnePull -Image $img
             }
 
-            # Heartbeat every 10s — show short names of in-flight images
-            # and how many are still queued. Skips when nothing's running.
+            # Heartbeat every 10s — show short names + REAL per-image
+            # byte progress so the user can see numbers ticking up.
+            # Stops printing when nothing's running.
             $secs = [int]$sw.Elapsed.TotalSeconds
             if ($inFlight.Count -gt 0 -and $secs -ge $lastTickSec + 10) {
                 $lastTickSec = $secs
                 $elapsed = if ($secs -ge 60) {
                     '{0}m{1:00}s' -f ([math]::Floor($secs/60)), ($secs % 60)
                 } else { "${secs}s" }
-                # Show last path segment of each in-flight image (compact).
-                $names = ($inFlight.Keys | ForEach-Object { ($_ -split '/')[-1] }) -join ', '
-                if ($names.Length -gt 80) { $names = $names.Substring(0,77) + '...' }
-                $tail = "  ($($queue.Count) queued)"
-                if ($queue.Count -eq 0) { $tail = '' }
-                Write-Host ("    [{0,6}] downloading: {1}{2}" -f $elapsed, $names, $tail) -ForegroundColor DarkGreen
+                $tail = if ($queue.Count -gt 0) { "  ($($queue.Count) queued)" } else { '' }
+                Write-Host ("    [{0,6}] {1} downloading:{2}" -f $elapsed, $inFlight.Count, $tail) -ForegroundColor DarkGreen
+                foreach ($img in $inFlight.Keys) {
+                    $shortName = ($img -split '/')[-1]
+                    if ($shortName.Length -gt 36) { $shortName = $shortName.Substring(0,33) + '...' }
+                    $state = Get-PullState -LogFile $inFlight[$img].LogFile
+                    if (-not $state -or $state.Total -eq 0) {
+                        $line = 'starting...'
+                    } else {
+                        # last action, truncated to keep the row compact
+                        $last = $state.Last
+                        if ($last.Length -gt 32) { $last = $last.Substring(0,29) + '...' }
+                        $line = '[{0,2}/{1,2} layers, {2} d/l] {3}' -f $state.Done, $state.Total, $state.Downloaded, $last
+                    }
+                    Write-Host ("              · {0,-36}  {1}" -f $shortName, $line) -ForegroundColor DarkGreen
+                }
             }
         }
 
