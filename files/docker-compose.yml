@@ -324,6 +324,14 @@ services:
     ports:
       - "8642:8642"
       - "9119:9119"
+    # The default image command is `hermes` (chat REPL). It immediately
+    # EOFs on a non-TTY stdin and exits — and it doesn't host the HTTP
+    # API the workspace needs anyway. `hermes gateway run` is the right
+    # foreground command: it boots the messaging gateway service, which
+    # includes the `api_server` platform (port 8642) when API_SERVER_*
+    # env vars are set. The dashboard is still backgrounded by the
+    # entrypoint via HERMES_DASHBOARD=1.
+    command: ["gateway", "run"]
     depends_on:
       - ollama
     # Lenient healthcheck: succeeds as soon as the gateway is listening
@@ -354,17 +362,25 @@ services:
     container_name: hermes-workspace
     environment:
       - HERMES_API_URL=http://hermes-agent:8642
+      # Defensive duplicate — upstream has been flipping between
+      # HERMES_* and CLAUDE_* env-var prefixes across minor releases.
+      # Setting both means we survive the next flip with no edit.
       - HERMES_API_TOKEN=${HERMES_API_KEY}
+      - CLAUDE_API_TOKEN=${HERMES_API_KEY}
       - HERMES_DASHBOARD_URL=http://hermes-agent:9119
       # Plain-HTTP LAN access — Secure-only cookies silently break
       # login over http://. Caddy fronts everything with https in
       # tunnel mode, so cookie security is delegated upstream there.
       - COOKIE_SECURE=0
       # The workspace refuses to bind off-loopback without either
-      # HERMES_PASSWORD or this flag. We choose the flag because
+      # *_PASSWORD or this flag. We choose the flag because
       # Authelia + Caddy already gate it in tunnel mode and on LAN
       # the trust boundary is the LAN itself.
+      # Upstream has flip-flopped between HERMES_* and CLAUDE_* on
+      # this exact pair of env vars — set BOTH so we're insulated
+      # against the next rename. The unused one is silently ignored.
       - HERMES_ALLOW_INSECURE_REMOTE=1
+      - CLAUDE_ALLOW_INSECURE_REMOTE=1
     volumes:
       # Workspace persists encrypted session tokens at
       # /home/workspace/.hermes/workspace-sessions.json. Upstream
@@ -374,14 +390,14 @@ services:
       - hermes_data:/home/workspace/.hermes
     ports:
       - "3030:3000"
-    # service_started, not service_healthy: the workspace has its own
-    # retry loop against the agent (HERMES_API_URL polled until 200), so
-    # blocking compose up on the agent's healthcheck just risks cascade
-    # failure if the agent takes longer than expected to bind. Workspace
-    # shows a brief "connecting" state until the agent answers — fine UX,
-    # zero failure mode.
+    # Wait for the agent to be HEALTHY (HTTP API on 8642 responding),
+    # not just started. The workspace caches its discovery result on
+    # boot — if it probes before the gateway has bound 8642 it locks
+    # into "mode=disconnected" and never re-discovers. Healthy gate
+    # avoids that race entirely.
     depends_on:
-      - hermes-agent
+      hermes-agent:
+        condition: service_healthy
     restart: always
     networks:
       - caddy

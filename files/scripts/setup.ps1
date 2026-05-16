@@ -2902,6 +2902,36 @@ function Pre-Seed-MediaStack {
         }
     }
 
+    # Immich system-integrity markers. Immich's StorageService refuses
+    # to start microservices if any of its managed subdirs under
+    # UPLOAD_LOCATION (=/data) is missing a `.immich` marker file —
+    # this is its mount-disappeared safety check. On a fresh install
+    # the host folder is empty, so we seed every required subdir with
+    # the marker. See https://docs.immich.app/administration/system-integrity
+    $photos = [string]$EnvMap['PHOTOS_PATH']
+    if (-not [string]::IsNullOrWhiteSpace($photos) -and
+        -not ($script:OS -eq 'Windows' -and $photos -match '^/Users/') -and
+        -not ($script:OS -ne 'Windows' -and $photos -match '^[A-Za-z]:[\\/]')) {
+        try {
+            if (-not (Test-Path $photos)) {
+                New-Item -ItemType Directory -Path $photos -Force | Out-Null
+                Dim "  Created PHOTOS_PATH host directory: $photos"
+            }
+            foreach ($sub in @('encoded-video','thumbs','upload','backups','library','profile')) {
+                $subDir    = Join-Path $photos $sub
+                $markerFile = Join-Path $subDir '.immich'
+                if (-not (Test-Path $subDir)) {
+                    New-Item -ItemType Directory -Path $subDir -Force | Out-Null
+                }
+                if (-not (Test-Path $markerFile)) {
+                    New-Item -ItemType File -Path $markerFile -Force | Out-Null
+                }
+            }
+        } catch {
+            Dim "  Could not seed Immich folder structure at $photos ($($_.Exception.Message)) — immich-server may crash-loop on first start."
+        }
+    }
+
     $apps = @(
         @{ Name='Sonarr';   Dir='sonarr';   Port=8989; ApiKey=$EnvMap['SONARR_API_KEY'] }
         @{ Name='Radarr';   Dir='radarr';   Port=7878; ApiKey=$EnvMap['RADARR_API_KEY'] }
