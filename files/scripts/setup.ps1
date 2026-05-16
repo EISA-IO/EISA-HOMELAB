@@ -941,6 +941,17 @@ function Get-StackVolumes {
     })
 }
 
+# Scan the default backup root (<repoRoot>/backups/) for subfolders that
+# look like real EISA Homelab backups — i.e. they contain a MANIFEST.txt.
+# Returns @() when the root doesn't exist or no valid backup is inside.
+function Get-LocalBackupFolders {
+    $repoRoot = Split-Path $ProjectRoot -Parent
+    $root = Join-Path $repoRoot 'backups'
+    if (-not (Test-Path $root)) { return @() }
+    $candidates = Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue
+    return @($candidates | Where-Object { Test-Path (Join-Path $_.FullName 'MANIFEST.txt') } | Sort-Object Name -Descending)
+}
+
 function Invoke-BackupStack {
     $repoRoot = Split-Path $ProjectRoot -Parent
     if (-not $BackupPath) {
@@ -1054,11 +1065,17 @@ function Invoke-BackupStack {
 }
 
 function Invoke-RestoreStack {
-    $path = $RestorePath
-    if (-not $path) {
+    param([string]$Path)
+    if (-not $Path) { $Path = $RestorePath }
+    if (-not $Path) {
         Step 'Restore EISA Homelab from a backup folder' ''
-        $path = Ask 'Path to the backup folder' '' -AllowEmpty
+        # Offer the most recent local backup as the default so the user
+        # can just hit Enter when they know they want it.
+        $local = @(Get-LocalBackupFolders)
+        $default = if ($local.Count -gt 0) { $local[0].FullName } else { '' }
+        $Path = Ask 'Path to the backup folder' $default -AllowEmpty
     }
+    $path = $Path
     if (-not $path) {
         Err 'No path provided — aborting.'
         return $false
@@ -1163,34 +1180,47 @@ function Invoke-RestoreStack {
 # ---------------------------------------------------------------------------
 function Invoke-Wizard {
     # ---- Step 0: restore from a backup? -----------------------------------
-    # Offered on every wizard run, but only useful if the user actually
-    # has a backup folder somewhere on disk. Default = start fresh.
-    Step 'Step 0 — Restore from a previous backup?' 'If you already have an EISA Homelab backup folder on this disk (created via the manager menu Backup option, typically copied over from another machine), the wizard can load images + volumes from it instead of pulling everything online and starting fresh.'
-    $restoreChoice = Ask-Choice @(
-        [pscustomobject]@{
-            Label = 'Start fresh — pull images from the internet (recommended)'
-            Hint  = @(
-                'Normal first-run flow. The wizard will ask questions and bring',
-                'up a clean stack, pulling every container image from its registry.'
-            )
+    # Only shown when at least one valid EISA Homelab backup is detected
+    # in <repoRoot>/backups/. On fresh clones with nothing to restore from
+    # we skip the question entirely — no point asking.
+    $foundBackups = @(Get-LocalBackupFolders)
+    if ($foundBackups.Count -gt 0) {
+        Step 'Step 0 — Restore from a previous backup?' "Detected $($foundBackups.Count) backup folder(s) in backups/. You can either load one of them now (skipping the rest of the wizard) or start fresh."
+        Dim '  Found:'
+        foreach ($b in $foundBackups | Select-Object -First 5) {
+            Dim "    $($b.Name)"
         }
-        [pscustomobject]@{
-            Label = 'Restore from a backup folder'
-            Hint  = @(
-                'Skip the rest of the wizard, load saved images + volumes +',
-                'persistent-storage from a folder on this machine, and bring',
-                'the stack up exactly like it was on the source machine.'
-            )
+        if ($foundBackups.Count -gt 5) { Dim "    … and $($foundBackups.Count - 5) more" }
+        G ''
+
+        $restoreChoice = Ask-Choice @(
+            [pscustomobject]@{
+                Label = 'Start fresh — pull images from the internet (recommended)'
+                Hint  = @(
+                    'Normal first-run flow. The wizard will ask questions and bring',
+                    'up a clean stack, pulling every container image from its registry.'
+                )
+            }
+            [pscustomobject]@{
+                Label = "Restore from $($foundBackups[0].Name)"
+                Hint  = @(
+                    'Skip the rest of the wizard, load saved images + volumes +',
+                    'persistent-storage from the most recent backup folder, and',
+                    'bring the stack up exactly like it was on the source machine.',
+                    'For other backup paths, use the manager menu [7] Restore.'
+                )
+            }
+        )
+        if ($restoreChoice -eq 2) {
+            # Pre-fill the restore path so the user isn't asked again.
+            if (Invoke-RestoreStack -Path $foundBackups[0].FullName) {
+                # Surface a tiny result shape so the main flow knows to skip
+                # the rest (stack-up + LLM pulls + media wiring) — restore
+                # already wrote the env + state and we just need to start.
+                return [pscustomobject]@{ Restored = $true }
+            }
+            Dim '  Restore failed or was aborted — falling through to a clean install.'
         }
-    )
-    if ($restoreChoice -eq 2) {
-        if (Invoke-RestoreStack) {
-            # Surface a tiny result shape so the main flow knows to skip
-            # the rest (stack-up + LLM pulls + media wiring) — restore
-            # already wrote the env + state and we just need to start.
-            return [pscustomobject]@{ Restored = $true }
-        }
-        Dim '  Restore failed or was aborted — falling through to a clean install.'
     }
 
     # Bootstrap .env from .env.example if missing.
