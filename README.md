@@ -7,7 +7,7 @@
 > 🛡️ **The ultimate private, no-tracking homelab stack.**
 > 💻 100% local-first  ·  🔇 zero telemetry  ·  🔐 your data on your machine.
 >
-> 👤 Created by **Ahmed Al-EISA**.
+> 👤 Created by **EISA**.
 
 ---
 
