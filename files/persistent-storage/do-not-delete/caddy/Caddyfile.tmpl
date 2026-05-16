@@ -148,6 +148,11 @@ http://research.${DOMAIN} {
 	reverse_proxy local-deep-research:5000
 }
 
+http://hermes.${DOMAIN} {
+	import forward_auth
+	reverse_proxy hermes-workspace:3000
+}
+
 # =============================================================================
 # MEDIA
 # =============================================================================

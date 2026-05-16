@@ -279,6 +279,102 @@ services:
       - caddy
     profiles: [ai]
 
+  # ========================
+  # HERMES AGENT — NousResearch's self-improving agent gateway.
+  # Exclusively wired to the in-stack ollama. config.yaml is rendered
+  # by setup.ps1 and bind-mounted on top of the data volume so it
+  # survives container recreate without touching state. No OpenRouter,
+  # no Anthropic, no cloud — all 5 LLM roles (main + 4 auxiliaries)
+  # call http://ollama:11434/v1.
+  #
+  # Image pinned per upstream Docker Hub: nousresearch/hermes-agent
+  # CI builds rolling sha-<full-sha> + v<date> tags. v2026.5.7 is the
+  # latest released image as of 2026-05.
+  # ========================
+  hermes-agent:
+    image: nousresearch/hermes-agent:v2026.5.7
+    container_name: hermes-agent
+    env_file: .env
+    environment:
+      # Gateway HTTP API. Must be on a non-loopback host so the
+      # workspace container can reach it across the caddy network;
+      # docs/AGENT-PAIRING.md notes the gateway refuses to start on
+      # a non-loopback host without API_SERVER_KEY.
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${HERMES_API_KEY}
+      - API_SERVER_CORS_ORIGINS=*
+      # Dashboard (sessions / conductor missions UI). The workspace
+      # talks to BOTH ports.
+      - HERMES_DASHBOARD=1
+      - HERMES_DASHBOARD_HOST=0.0.0.0
+      - HERMES_DASHBOARD_PORT=9119
+      # Local Ollama models can take many seconds to first-token;
+      # the upstream Ollama-setup doc recommends bumping the timeout.
+      - HERMES_API_TIMEOUT=1800
+      - HERMES_UID=1000
+      - HERMES_GID=1000
+    volumes:
+      - hermes_data:/opt/data
+      # config.yaml is auto-rendered by setup.ps1 (Configure-HermesAgent)
+      # and locks every LLM role to the in-stack ollama. ro mount so
+      # the agent can't write through it.
+      - ${PERSISTENT_STORAGE}/do-not-delete/hermes-agent/config.yaml:/opt/data/config.yaml:ro
+    ports:
+      - "8642:8642"
+      - "9119:9119"
+    depends_on:
+      - ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8642/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: always
+    networks:
+      - caddy
+    profiles: [ai]
+
+  # ========================
+  # HERMES WORKSPACE — web UI for chatting with hermes-agent, managing
+  # memory + swarms. Pure Node.js, env-var-driven (no config file).
+  # Pairs with hermes-agent over two HTTP URLs sharing one bearer
+  # token (API_SERVER_KEY == HERMES_API_TOKEN).
+  # ========================
+  hermes-workspace:
+    image: ghcr.io/outsourc-e/hermes-workspace:v2.1.3
+    container_name: hermes-workspace
+    environment:
+      - HERMES_API_URL=http://hermes-agent:8642
+      - HERMES_API_TOKEN=${HERMES_API_KEY}
+      - HERMES_DASHBOARD_URL=http://hermes-agent:9119
+      # Plain-HTTP LAN access — Secure-only cookies silently break
+      # login over http://. Caddy fronts everything with https in
+      # tunnel mode, so cookie security is delegated upstream there.
+      - COOKIE_SECURE=0
+      # The workspace refuses to bind off-loopback without either
+      # HERMES_PASSWORD or this flag. We choose the flag because
+      # Authelia + Caddy already gate it in tunnel mode and on LAN
+      # the trust boundary is the LAN itself.
+      - HERMES_ALLOW_INSECURE_REMOTE=1
+    volumes:
+      # Workspace persists encrypted session tokens at
+      # /home/workspace/.hermes/workspace-sessions.json. Upstream
+      # compose pattern shares the agent's data volume; we mirror
+      # that here so the workspace can also read agent-side state
+      # (model list, etc.).
+      - hermes_data:/home/workspace/.hermes
+    ports:
+      - "3030:3000"
+    depends_on:
+      hermes-agent:
+        condition: service_healthy
+    restart: always
+    networks:
+      - caddy
+    profiles: [ai]
+
   #######################  SEARXNG  #######################
   searxng:
     env_file: .env
@@ -649,6 +745,7 @@ volumes:
   immich_model_cache:
   immich_redis_data:
   vane_data:
+  hermes_data:
 
 networks:
   caddy:

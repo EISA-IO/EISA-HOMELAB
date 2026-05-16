@@ -570,7 +570,8 @@ do_stop() {
     local -a EISA=(
         cloudflared heimdall-media Caddy Authelia navidrome jellyfin
         filebrowser omni-tools n8n qdrant ollama open-webui searxng
-        local-deep-research vane Portainer tor-browser
+        local-deep-research vane hermes-agent hermes-workspace
+        Portainer tor-browser
         immich-server immich-machine-learning immich-redis immich-postgres
         seerr sonarr radarr prowlarr qbittorrent
     )
@@ -659,7 +660,8 @@ do_list() {
     local -a EISA=(
         cloudflared heimdall-media Caddy Authelia navidrome jellyfin
         filebrowser omni-tools n8n qdrant ollama open-webui searxng
-        local-deep-research vane Portainer tor-browser
+        local-deep-research vane hermes-agent hermes-workspace
+        Portainer tor-browser
         immich-server immich-machine-learning immich-redis immich-postgres
         seerr sonarr radarr prowlarr qbittorrent
     )

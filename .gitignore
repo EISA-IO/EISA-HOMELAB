@@ -13,6 +13,10 @@ files/context_size.cfg
 files/persistent-storage/do-not-delete/caddy/Caddyfile
 files/persistent-storage/do-not-delete/authelia/configuration.yml
 files/persistent-storage/do-not-delete/searxng/settings.yml
+# Hermes Agent config.yaml is auto-rendered by Configure-HermesAgent
+# (locks the agent to in-stack Ollama). The directory is bind-mounted
+# so it must exist; the file inside is regenerated on every run.
+files/persistent-storage/do-not-delete/hermes-agent/
 
 # Real users database (only the .example template is committed).
 files/persistent-storage/do-not-delete/authelia/users_database.yml
