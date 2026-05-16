@@ -192,15 +192,22 @@ echo  ============================================================
 echo   EISA HOMELAB ULTIMATE - Backup / Restore
 echo  ============================================================
 echo.
-echo   [1] Backup the stack now    (images + named volumes + state)
-echo   [2] Restore from a backup   (load images + volumes + state)
+echo   Backup:
+echo   [1] Everything       (images + volumes + persistent-storage + .env)
+echo   [2] Images only      (docker images.tar, no user data)
+echo   [3] Volumes only     (volumes + persistent-storage + .env, no images)
+echo.
+echo   Restore:
+echo   [4] Restore from a backup folder
 echo.
 echo   [0] Back
 echo.
 set "bchoice="
 set /p "bchoice=  Select option: "
-if "!bchoice!"=="1" goto :DO_BACKUP
-if "!bchoice!"=="2" goto :DO_RESTORE
+if "!bchoice!"=="1" set "BMODE=full"    & goto :DO_BACKUP
+if "!bchoice!"=="2" set "BMODE=images"  & goto :DO_BACKUP
+if "!bchoice!"=="3" set "BMODE=volumes" & goto :DO_BACKUP
+if "!bchoice!"=="4" goto :DO_RESTORE
 if "!bchoice!"=="0" goto :MAIN_MENU
 goto :DO_BACKUP_MENU
 
@@ -208,7 +215,7 @@ goto :DO_BACKUP_MENU
 cls
 echo.
 echo  ============================================================
-echo   EISA HOMELAB ULTIMATE - Backup
+echo   EISA HOMELAB ULTIMATE - Backup  (mode: !BMODE!)
 echo  ============================================================
 echo.
 if not exist "%SETUP_PS1%" (
@@ -217,12 +224,18 @@ if not exist "%SETUP_PS1%" (
     pause
     goto :DO_BACKUP_MENU
 )
-echo   Dumps every Docker image + named volume + persistent-storage
-echo   bind mount + .env into a portable folder you can move to USB
-echo   or cloud sync. Will offer to stop the stack first for a clean
-echo   snapshot. Can take a while — image tar is the heavy bit.
+if "!BMODE!"=="full"    echo   Dumps every Docker image + named volume + persistent-storage
+if "!BMODE!"=="full"    echo   bind mount + .env into a portable folder. Image tar is the
+if "!BMODE!"=="full"    echo   heavy bit; will offer to stop the stack first for a clean
+if "!BMODE!"=="full"    echo   volume snapshot.
+if "!BMODE!"=="images"  echo   Saves docker images only (no user data, no .env). Useful as
+if "!BMODE!"=="images"  echo   an offline image cache. Stack can stay running.
+if "!BMODE!"=="volumes" echo   Saves named volumes + persistent-storage + .env, no images.
+if "!BMODE!"=="volumes" echo   Smaller and faster; restore will re-pull images from
+if "!BMODE!"=="volumes" echo   registries. Will offer to stop the stack first for a clean
+if "!BMODE!"=="volumes" echo   volume snapshot.
 echo   ----------------------------------------------------------------
-%PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -Backup
+%PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -Backup -BackupMode !BMODE!
 echo   ----------------------------------------------------------------
 echo.
 echo   Press any key to return to the backup menu...

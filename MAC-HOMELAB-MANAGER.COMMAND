@@ -451,36 +451,58 @@ do_backup_menu() {
     while true; do
         clear
         header "Backup / Restore"
-        say "   [1] Backup the stack now    (images + named volumes + state)"
-        say "   [2] Restore from a backup   (load images + volumes + state)"
+        say "   Backup:"
+        say "   [1] Everything       (images + volumes + persistent-storage + .env)"
+        say "   [2] Images only      (docker images.tar, no user data)"
+        say "   [3] Volumes only     (volumes + persistent-storage + .env, no images)"
+        echo
+        say "   Restore:"
+        say "   [4] Restore from a backup folder"
         echo
         say "   [0] Back"
         echo
         local choice
         read -r -p "  Select option: " choice
         case "${choice}" in
-            1) do_backup ;;
-            2) do_restore ;;
-            0) return ;;
+            1) do_backup full    ;;
+            2) do_backup images  ;;
+            3) do_backup volumes ;;
+            4) do_restore        ;;
+            0) return            ;;
         esac
     done
 }
 
 do_backup() {
+    local mode="${1:-full}"
     clear
-    header "Backup"
+    header "Backup  (mode: ${mode})"
     if ! ensure_pwsh; then pause_return; return; fi
     if [ ! -f "${SETUP_PS1}" ]; then
         err "  [X] setup.ps1 not found at ${SETUP_PS1}"
         pause_return
         return
     fi
-    echo "  Dumps every Docker image + named volume + persistent-storage"
-    echo "  bind mount + .env into a portable folder you can move to USB"
-    echo "  or cloud sync. Will offer to stop the stack first for a clean"
-    echo "  snapshot. Can take a while — image tar is the heavy bit."
+    case "${mode}" in
+        full)
+            echo "  Dumps every Docker image + named volume + persistent-storage"
+            echo "  bind mount + .env into a portable folder. Image tar is the"
+            echo "  heavy bit; will offer to stop the stack first for a clean"
+            echo "  volume snapshot."
+            ;;
+        images)
+            echo "  Saves docker images only (no user data, no .env). Useful as"
+            echo "  an offline image cache. Stack can stay running."
+            ;;
+        volumes)
+            echo "  Saves named volumes + persistent-storage + .env, no images."
+            echo "  Smaller and faster; restore will re-pull images from"
+            echo "  registries. Will offer to stop the stack first for a clean"
+            echo "  volume snapshot."
+            ;;
+    esac
     echo "  ----------------------------------------------------------------"
-    pwsh -NoProfile -File "${SETUP_PS1}" -Backup
+    pwsh -NoProfile -File "${SETUP_PS1}" -Backup -BackupMode "${mode}"
     echo "  ----------------------------------------------------------------"
     echo
     pause_return
