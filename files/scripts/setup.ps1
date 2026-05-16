@@ -3240,14 +3240,31 @@ function Start-Stack {
     }
 
     G ''
-    G  '  [1/2] Pulling images...'
+    G  '  [1/2] Pulling images (3 at a time)...'
     G  ''
-    & docker @pullArgs
-    if ($LASTEXITCODE -ne 0) {
+    # COMPOSE_PARALLEL_LIMIT throttles compose's engine-call concurrency.
+    # On home internet, 3 parallel pulls each get a decent slice of
+    # bandwidth; with the default (unlimited / one per image) every pull
+    # gets bandwidth/N and none of them progress meaningfully. We restore
+    # the prior value (if any) after the pull so the up phase isn't
+    # constrained unexpectedly.
+    $prevParallelLimit = $env:COMPOSE_PARALLEL_LIMIT
+    $env:COMPOSE_PARALLEL_LIMIT = '3'
+    try {
+        & docker @pullArgs
+        $pullExit = $LASTEXITCODE
+    } finally {
+        if ($null -eq $prevParallelLimit) {
+            Remove-Item Env:COMPOSE_PARALLEL_LIMIT -ErrorAction SilentlyContinue
+        } else {
+            $env:COMPOSE_PARALLEL_LIMIT = $prevParallelLimit
+        }
+    }
+    if ($pullExit -ne 0) {
         G ''
         Err 'docker compose pull failed.'
         Err '    Check internet / registry creds, then re-run Start Stack.'
-        exit $LASTEXITCODE
+        exit $pullExit
     }
     G ''
     Ok 'Images ready.'
