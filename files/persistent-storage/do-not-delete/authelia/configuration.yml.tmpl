@@ -73,13 +73,13 @@ access_control:
         - group:admins
 
 ###############################################################
-#                         AI IMAGES                           #
+#                  AI IMAGE / VIDEO GENERATION                #
 ###############################################################
-    - domain: flux.${DOMAIN}
+    - domain: image.${DOMAIN}
       policy: one_factor
       subject:
         - group:admins
-    - domain: pony.${DOMAIN}
+    - domain: video.${DOMAIN}
       policy: one_factor
       subject:
         - group:admins
@@ -103,7 +103,7 @@ access_control:
       policy: one_factor
       subject:
         - group:admins
-    - domain: vane.${DOMAIN}
+    - domain: smartsearch.${DOMAIN}
       policy: one_factor
       subject:
         - group:admins
@@ -154,7 +154,7 @@ access_control:
       policy: one_factor
       subject:
         - group:admins
-    - domain: qb.${DOMAIN}
+    - domain: torrent.${DOMAIN}
       policy: one_factor
       subject:
         - group:admins

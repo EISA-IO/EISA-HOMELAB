@@ -102,17 +102,18 @@ http://qdrant.${DOMAIN} {
 }
 
 # =============================================================================
-# AI IMAGES
+# AI IMAGE / VIDEO GENERATION  (host-native services - 502 until you run
+# them on the host)
 # =============================================================================
 
-http://flux.${DOMAIN} {
+http://image.${DOMAIN} {
 	import forward_auth
 	reverse_proxy host.docker.internal:9020
 }
 
-http://pony.${DOMAIN} {
+http://video.${DOMAIN} {
 	import forward_auth
-	reverse_proxy host.docker.internal:9021
+	reverse_proxy host.docker.internal:3333
 }
 
 # =============================================================================
@@ -138,7 +139,7 @@ http://n8n.${DOMAIN} {
 	reverse_proxy host.docker.internal:5678
 }
 
-http://vane.${DOMAIN} {
+http://smartsearch.${DOMAIN} {
 	import forward_auth
 	reverse_proxy vane:3000
 }
@@ -201,7 +202,7 @@ http://prowlarr.${DOMAIN} {
 	reverse_proxy prowlarr:9696
 }
 
-http://qb.${DOMAIN} {
+http://torrent.${DOMAIN} {
 	import forward_auth
 	reverse_proxy qbittorrent:9081 {
 		header_up Host {upstream_hostport}

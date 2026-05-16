@@ -648,8 +648,8 @@ services:
       - TZ=${TZ:-Asia/Riyadh}
       # qBittorrent v5 hard-rejects requests whose Host-header port doesn't
       # match the listening port (no longer overridable via HostHeaderValidation).
-      # Listen + publish on the SAME port so qb.localhost / localhost:9081 /
-      # qbittorrent:9081 all carry a matching Host header.
+      # Listen + publish on the SAME port so torrent.localhost / localhost:9081
+      # / qbittorrent:9081 all carry a matching Host header.
       - WEBUI_PORT=9081
     volumes:
       - ${PERSISTENT_STORAGE}/do-not-delete/qbittorrent:/config

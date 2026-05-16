@@ -1869,7 +1869,7 @@ http://n8n.localhost {
     reverse_proxy host.docker.internal:5678
 }
 
-http://vane.localhost {
+http://smartsearch.localhost {
     reverse_proxy vane:3000
 }
 
@@ -1882,21 +1882,17 @@ http://hermes.localhost {
 }
 
 # AI host services (no docker container in the standard compose - these
-# routes 502 until you run flux/pony/voice/ltx natively on the host).
-http://flux.localhost {
+# routes 502 until you run image/video/voice natively on the host).
+http://image.localhost {
     reverse_proxy host.docker.internal:9020
 }
 
-http://pony.localhost {
-    reverse_proxy host.docker.internal:9021
+http://video.localhost {
+    reverse_proxy host.docker.internal:3333
 }
 
 http://voice.localhost {
     reverse_proxy host.docker.internal:7861
-}
-
-http://ltx.localhost {
-    reverse_proxy host.docker.internal:9022
 }
 
 # ===== MEDIA =====
@@ -1936,7 +1932,7 @@ http://prowlarr.localhost {
 # qBittorrent v5 hard-validates the Host-header port against its listening
 # port, so we proxy on container port 9081 (matches host:9081 + WebUI\Port)
 # and rewrite the Host header to qbittorrent:9081 so it always matches.
-http://qb.localhost {
+http://torrent.localhost {
     reverse_proxy qbittorrent:9081 {
         header_up Host {upstream_hostport}
     }
@@ -3121,7 +3117,7 @@ function Pre-Seed-MediaStack {
     # qBittorrent: minimal pre-seed.
     #   - AuthSubnetWhitelist for the docker bridge + RFC1918 ranges so the
     #     API configurator (and Caddy) reach /api/v2 without creds.
-    #   - HostHeaderValidation + CSRF off so qb.localhost / qb.${DOMAIN}
+    #   - HostHeaderValidation + CSRF off so torrent.localhost / torrent.${DOMAIN}
     #     proxied requests aren't rejected as cross-origin.
     #   - /downloads as default save path.
     # DO NOT pre-seed Password_PBKDF2: qBittorrent v5.x rejects the legacy
@@ -3252,7 +3248,7 @@ function Ensure-HeimdallTiles {
         # required.
         $sub = [ordered]@{
             1 = 'chat'; 2 = 'movie'; 3 = 'music'; 4 = 'file'; 5 = 'tool'
-            6 = 'flux'; 7 = 'voice'; 8 = 'ltx'; 9 = 'hermes'
+            6 = 'image'; 7 = 'voice'; 8 = 'video'; 9 = 'hermes'
             10 = 'n8n'; 11 = 'hermes'; 12 = 'n8n'
         }
         foreach ($id in $sub.Keys) {
@@ -3262,7 +3258,7 @@ function Ensure-HeimdallTiles {
         # ONLINE MODE: <subdomain>.<TileDomain> matching the Caddyfile vhosts.
         $sub = [ordered]@{
             1 = 'chat'; 2 = 'movie'; 3 = 'music'; 4 = 'file'; 5 = 'tool'
-            6 = 'flux'; 7 = 'voice'; 8 = 'ltx'; 9 = 'hermes'
+            6 = 'image'; 7 = 'voice'; 8 = 'video'; 9 = 'hermes'
             10 = 'n8n'; 11 = 'hermes'; 12 = 'n8n'
         }
         foreach ($id in $sub.Keys) {
@@ -3851,7 +3847,7 @@ function Show-Summary {
         G '    Sonarr (TV)             http://sonarr.localhost'
         G '    Radarr (movies)         http://radarr.localhost'
         G '    Prowlarr (indexers)     http://prowlarr.localhost'
-        G '    qBittorrent             http://qb.localhost   (admin / adminadmin)'
+        G '    qBittorrent             http://torrent.localhost   (admin / adminadmin)'
     }
     if ($Result.HasAi) {
         G ''
@@ -3860,7 +3856,7 @@ function Show-Summary {
         G '    Hermes Workspace        http://hermes.localhost   (agent + memory; auto-wired to Ollama)'
         G '    SearXNG (search)        http://search.localhost'
         G '    Local Deep Research     http://research.localhost'
-        G '    Vane                    http://vane.localhost'
+        G '    Vane (AI search)        http://smartsearch.localhost'
         G '    n8n (workflows)         http://n8n.localhost'
         G '    Qdrant (vector DB)      http://qdrant.localhost'
         Dim '    Ollama API (direct)     http://localhost:11434  (API-only, no UI)'
@@ -3914,14 +3910,14 @@ function Show-Summary {
             Dim "    sonarr.$d      ->  HTTP  caddy:80   Sonarr (TV)"
             Dim "    radarr.$d      ->  HTTP  caddy:80   Radarr (movies)"
             Dim "    prowlarr.$d    ->  HTTP  caddy:80   Prowlarr (indexers)"
-            Dim "    qb.$d          ->  HTTP  caddy:80   qBittorrent"
+            Dim "    torrent.$d     ->  HTTP  caddy:80   qBittorrent"
         }
         if ($Result.HasAi) {
             Dim "    chat.$d        ->  HTTP  caddy:80   Open WebUI"
             Dim "    hermes.$d      ->  HTTP  caddy:80   Hermes Workspace"
             Dim "    search.$d      ->  HTTP  caddy:80   SearXNG"
             Dim "    n8n.$d         ->  HTTP  caddy:80   n8n workflows"
-            Dim "    vane.$d        ->  HTTP  caddy:80   Vane AI engine"
+            Dim "    smartsearch.$d ->  HTTP  caddy:80   Vane AI engine"
             Dim "    research.$d    ->  HTTP  caddy:80   Local Deep Research"
             Dim "    qdrant.$d      ->  HTTP  caddy:80   Qdrant vector DB"
         }

@@ -137,13 +137,13 @@ After the wizard finishes, every app is reachable at a clean `*.localhost` URL -
 | Heimdall (start page) | <http://hub.localhost> | Open WebUI (chat) | <http://chat.localhost> |
 | Jellyfin (movies/TV) | <http://movie.localhost> | SearXNG (search) | <http://search.localhost> |
 | Navidrome (music) | <http://music.localhost> | Local Deep Research | <http://research.localhost> |
-| Immich (photos) | <http://photos.localhost> | Vane | <http://vane.localhost> |
+| Immich (photos) | <http://photos.localhost> | Vane (AI search) | <http://smartsearch.localhost> |
 | Filebrowser | <http://file.localhost> | n8n (workflows) | <http://n8n.localhost> |
 | Omni Tools | <http://tool.localhost> | Qdrant (vectors) | <http://qdrant.localhost> |
 | Tor Browser | <http://tor.localhost/> | Portainer | <http://portainer.localhost> |
 | Seerr (requests) | <http://request.localhost> | Sonarr (TV) | <http://sonarr.localhost> |
 | Radarr (movies) | <http://radarr.localhost> | Prowlarr (indexers) | <http://prowlarr.localhost> |
-| qBittorrent | <http://qb.localhost> | Ollama API | <http://localhost:11434> |
+| qBittorrent | <http://torrent.localhost> | Ollama API | <http://localhost:11434> |
 
 In tunnel mode everything also gets a subdomain on your own domain (`chat.example.com`, `movie.example.com`, …) gated by Authelia SSO.
 
