@@ -29,6 +29,8 @@ param(
     [switch]$EditMediaPaths, # standalone editor for MOVIES_PATH / TV_SHOWS_PATH / MUSIC_PATH / DOWNLOADS_PATH / PHOTOS_PATH
     [switch]$Backup,         # save images + named volumes + persistent-storage + .env to a portable folder
     [string]$BackupPath,     # destination folder for -Backup (default: <repoRoot>\backups\eisa-homelab-backup-<timestamp>)
+    [ValidateSet('','full','images','volumes')]
+    [string]$BackupMode = '', # what to include in -Backup: full | images | volumes (prompts if blank)
     [switch]$Restore,        # load images + volumes + persistent-storage from a backup folder, then start
     [string]$RestorePath     # source folder for -Restore (prompted if not supplied)
 )
@@ -1007,6 +1009,10 @@ function Get-LocalBackupFolders {
 }
 
 function Invoke-BackupStack {
+    param(
+        [ValidateSet('','full','images','volumes')]
+        [string]$Mode = ''
+    )
     $repoRoot = Split-Path $ProjectRoot -Parent
     if (-not $BackupPath) {
         $stamp     = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -1014,92 +1020,164 @@ function Invoke-BackupStack {
     }
 
     Step 'Backup EISA Homelab' "Destination: $BackupPath"
-    Dim '  This dumps every Docker image, every named volume, and the persistent-storage bind mount into one portable folder. Recommend stopping the stack first so volume snapshots are consistent.'
+
+    # Mode picker: full | images | volumes. Skipped when the caller
+    # already passed -Mode / -BackupMode (e.g. from a scripted invocation).
+    if (-not $Mode) {
+        Dim '  What to include in this backup?'
+        G  ''
+        $modePick = Ask-Choice @(
+            [pscustomobject]@{
+                Label = 'Everything (recommended)'
+                Hint  = @(
+                    'images.tar + named volumes + persistent-storage + .env'
+                    'Largest file, fully self-contained restore.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'Images only'
+                Hint  = @(
+                    'Just images.tar — docker save of every stack image.'
+                    'Use as an offline image cache; no user data included.'
+                )
+            }
+            [pscustomobject]@{
+                Label = 'Volumes only'
+                Hint  = @(
+                    'Named volumes + persistent-storage + .env — no images.'
+                    'Smaller + faster; restore will re-pull images from registries.'
+                )
+            }
+        )
+        $Mode = switch ($modePick) {
+            1 { 'full' }
+            2 { 'images' }
+            3 { 'volumes' }
+        }
+        G ''
+    }
+
+    $doImages = $Mode -in @('full','images')
+    $doData   = $Mode -in @('full','volumes')
+
+    $modeDesc = @{
+        'full'    = 'images + volumes + persistent-storage + .env'
+        'images'  = 'just docker images.tar'
+        'volumes' = 'volumes + persistent-storage + .env (no images)'
+    }[$Mode]
+    Dim "  Mode: $Mode — $modeDesc"
+    if ($doData) {
+        Dim '  Recommend stopping the stack first so volume snapshots are consistent.'
+    }
     G  ''
 
-    # Warn-and-confirm if the stack is running.
-    $running = @()
-    & docker ps --format '{{.Names}}' 2>$null | ForEach-Object { if ($_) { $running += $_ } }
-    if ($running.Count -gt 0) {
-        Dim "  Stack appears to be running ($($running.Count) container(s)). Volumes backed up while postgres / sqlite are writing can be inconsistent."
-        if (Ask-YesNo '  Stop the stack now for a clean backup? (recommended)' $true) {
-            Push-Location $ProjectRoot
-            try {
-                & docker compose --progress plain down -t 10
-            } finally { Pop-Location }
+    # Warn-and-confirm if the stack is running. Only relevant when we're
+    # snapshotting volumes — images.tar is a pure docker-save of cached
+    # layers and is unaffected by whether containers are running.
+    if ($doData) {
+        $running = @()
+        & docker ps --format '{{.Names}}' 2>$null | ForEach-Object { if ($_) { $running += $_ } }
+        if ($running.Count -gt 0) {
+            Dim "  Stack appears to be running ($($running.Count) container(s)). Volumes backed up while postgres / sqlite are writing can be inconsistent."
+            if (Ask-YesNo '  Stop the stack now for a clean backup? (recommended)' $true) {
+                Push-Location $ProjectRoot
+                try {
+                    & docker compose --progress plain down -t 10
+                } finally { Pop-Location }
+            }
         }
     }
 
     New-Item -ItemType Directory -Force -Path $BackupPath | Out-Null
-    New-Item -ItemType Directory -Force -Path (Join-Path $BackupPath 'volumes') | Out-Null
+    if ($doData) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $BackupPath 'volumes') | Out-Null
+    }
 
     # 1) Save images.
-    $imgs = Get-StackImages
-    if ($imgs.Count -eq 0) {
-        Dim '  No locally-pulled stack images found — skipping image save.'
-    } else {
-        Ok "Saving $($imgs.Count) image(s) to images.tar — this is the big one, can take a few minutes."
-        $imagesTar = Join-Path $BackupPath 'images.tar'
-        & docker save -o $imagesTar @imgs
-        if ($LASTEXITCODE -ne 0) {
-            Err "docker save failed (exit $LASTEXITCODE)."
+    $imgs = @()
+    if ($doImages) {
+        $imgs = Get-StackImages
+        if ($imgs.Count -eq 0) {
+            Dim '  No locally-pulled stack images found — skipping image save.'
         } else {
-            $size = [math]::Round((Get-Item $imagesTar).Length / 1GB, 2)
-            Ok "images.tar written ($size GB)."
+            Ok "Saving $($imgs.Count) image(s) to images.tar — this is the big one, can take a few minutes."
+            $imagesTar = Join-Path $BackupPath 'images.tar'
+            & docker save -o $imagesTar @imgs
+            if ($LASTEXITCODE -ne 0) {
+                Err "docker save failed (exit $LASTEXITCODE)."
+            } else {
+                $size = [math]::Round((Get-Item $imagesTar).Length / 1GB, 2)
+                Ok "images.tar written ($size GB)."
+            }
         }
     }
 
     # 2) Save named volumes via an alpine helper container.
-    $vols = Get-StackVolumes
-    if ($vols.Count -eq 0) {
-        Dim '  No named volumes found — nothing to back up.'
-    } else {
-        Ok "Archiving $($vols.Count) named volume(s) via alpine tar..."
-        $volBackupDir = (Resolve-Path (Join-Path $BackupPath 'volumes')).Path
-        foreach ($v in $vols) {
-            $short = ($v -replace '^[^_]+_','')
-            Dim "    -> $v"
-            & docker run --rm `
-                -v "${v}:/source:ro" `
-                -v "${volBackupDir}:/backup" `
-                alpine sh -c "tar czf /backup/${short}.tar.gz -C /source ." 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                Err "    tar failed for volume $v"
+    $vols = @()
+    if ($doData) {
+        $vols = Get-StackVolumes
+        if ($vols.Count -eq 0) {
+            Dim '  No named volumes found — nothing to back up.'
+        } else {
+            Ok "Archiving $($vols.Count) named volume(s) via alpine tar..."
+            $volBackupDir = (Resolve-Path (Join-Path $BackupPath 'volumes')).Path
+            foreach ($v in $vols) {
+                $short = ($v -replace '^[^_]+_','')
+                Dim "    -> $v"
+                & docker run --rm `
+                    -v "${v}:/source:ro" `
+                    -v "${volBackupDir}:/backup" `
+                    alpine sh -c "tar czf /backup/${short}.tar.gz -C /source ." 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Err "    tar failed for volume $v"
+                }
             }
+            Ok 'Volumes archived.'
         }
-        Ok 'Volumes archived.'
     }
 
     # 3) Tar persistent-storage via alpine (the project lives at $ProjectRoot
     #    which is files/, persistent-storage is at $ProjectRoot/persistent-storage).
-    $psSrc = Join-Path $ProjectRoot 'persistent-storage'
-    if (Test-Path $psSrc) {
-        Ok 'Archiving persistent-storage (configs, postgres data, *arr state)...'
-        $psBackup = (Resolve-Path $BackupPath).Path
-        $psSrcAbs = (Resolve-Path $psSrc).Path
-        & docker run --rm `
-            -v "${psSrcAbs}:/source:ro" `
-            -v "${psBackup}:/backup" `
-            alpine sh -c 'tar czf /backup/persistent-storage.tar.gz -C /source .' 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Err '  persistent-storage tar failed.'
+    if ($doData) {
+        $psSrc = Join-Path $ProjectRoot 'persistent-storage'
+        if (Test-Path $psSrc) {
+            Ok 'Archiving persistent-storage (configs, postgres data, *arr state)...'
+            $psBackup = (Resolve-Path $BackupPath).Path
+            $psSrcAbs = (Resolve-Path $psSrc).Path
+            & docker run --rm `
+                -v "${psSrcAbs}:/source:ro" `
+                -v "${psBackup}:/backup" `
+                alpine sh -c 'tar czf /backup/persistent-storage.tar.gz -C /source .' 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Err '  persistent-storage tar failed.'
+            } else {
+                Ok 'persistent-storage.tar.gz written.'
+            }
         } else {
-            Ok 'persistent-storage.tar.gz written.'
+            Dim '  No persistent-storage folder yet — skipping.'
         }
-    } else {
-        Dim '  No persistent-storage folder yet — skipping.'
     }
 
-    # 4) Copy .env + .wizard-state.json.
-    if (Test-Path $EnvFile)   { Copy-Item $EnvFile   (Join-Path $BackupPath '.env')              -Force }
-    if (Test-Path $StateFile) { Copy-Item $StateFile (Join-Path $BackupPath '.wizard-state.json') -Force }
+    # 4) Copy .env + .wizard-state.json. Skip in images-only mode — the
+    # env file holds secrets and a pure image cache should be portable
+    # without dragging credentials along.
+    if ($doData) {
+        if (Test-Path $EnvFile)   { Copy-Item $EnvFile   (Join-Path $BackupPath '.env')              -Force }
+        if (Test-Path $StateFile) { Copy-Item $StateFile (Join-Path $BackupPath '.wizard-state.json') -Force }
+    }
 
     # 5) Manifest.
+    $bundled = @()
+    if ($doImages -and $imgs.Count -gt 0) { $bundled += 'images.tar' }
+    if ($doData) {
+        $bundled += @('volumes/*.tar.gz', 'persistent-storage.tar.gz', '.env', '.wizard-state.json')
+    }
     $manifest = @(
         "EISA Homelab backup"
         "Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')"
         "Host:    $env:COMPUTERNAME$([Environment]::MachineName)"
         "Project: $ProjectRoot"
+        "Mode:    $Mode"
         ""
         "Images saved: $($imgs.Count)"
         ($imgs | ForEach-Object { "  $_" })
@@ -1107,7 +1185,7 @@ function Invoke-BackupStack {
         "Volumes saved: $($vols.Count)"
         ($vols | ForEach-Object { "  $_" })
         ""
-        "Also bundled: persistent-storage.tar.gz, .env, .wizard-state.json"
+        "Bundled: $($bundled -join ', ')"
     ) -join "`n"
     Set-Content -Path (Join-Path $BackupPath 'MANIFEST.txt') -Value $manifest -Encoding UTF8
 
@@ -3880,7 +3958,7 @@ if ($EditMediaPaths) {
 # volumes + persistent-storage into a portable folder and exits.
 # -----------------------------------------------------------------------------
 if ($Backup) {
-    Invoke-BackupStack
+    Invoke-BackupStack -Mode $BackupMode
     exit 0
 }
 
