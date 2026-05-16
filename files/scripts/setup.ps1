@@ -909,20 +909,43 @@ function Get-FullComposeConfig {
 
 # List every image referenced by docker-compose.yml that is actually
 # pulled locally. Returns @() if compose config fails (e.g. no .env).
+# IMPORTANT: each GPU overlay (nvidia/amd/native) can swap a service's
+# image tag — e.g. immich-machine-learning swaps to ":v2.7.5-cuda" on
+# nvidia hosts. If we only read the base file we MISS those variants,
+# the backup omits them, and restore quietly re-pulls them from the
+# registry. Union the image list across base + every overlay so the
+# backup captures whichever variant is actually running.
 function Get-StackImages {
-    $cfg = Get-FullComposeConfig
-    if (-not $cfg) { return @() }
-    $declared = @()
-    foreach ($s in $cfg.services.PSObject.Properties) {
-        if ($s.Value.image) { $declared += $s.Value.image }
+    $declared = @{}
+    $overlays = @('','docker-compose.nvidia.yml','docker-compose.amd.yml','docker-compose.ollama-native.yml')
+
+    Push-Location $ProjectRoot
+    try {
+        foreach ($overlay in $overlays) {
+            $args = @('compose','-f','docker-compose.yml')
+            if ($overlay -and (Test-Path (Join-Path $ProjectRoot $overlay))) {
+                $args += @('-f', $overlay)
+            }
+            foreach ($p in @('ai','media','media-stream','media-request','productivity','tunnel')) {
+                $args += @('--profile', $p)
+            }
+            $args += @('config','--format','json')
+            $cfgJson = & docker @args 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $cfgJson) { continue }
+            $cfg = $cfgJson | ConvertFrom-Json
+            foreach ($s in $cfg.services.PSObject.Properties) {
+                if ($s.Value.image) { $declared[$s.Value.image] = $true }
+            }
+        }
+    } finally {
+        Pop-Location
     }
-    $declared = $declared | Sort-Object -Unique
 
     $local = @{}
     & docker image ls --format '{{.Repository}}:{{.Tag}}' 2>$null | ForEach-Object {
         if ($_) { $local[$_] = $true }
     }
-    return @($declared | Where-Object { $local.ContainsKey($_) })
+    return @($declared.Keys | Sort-Object | Where-Object { $local.ContainsKey($_) })
 }
 
 # Get a (declared, local) tuple for the images Compose would pull right
