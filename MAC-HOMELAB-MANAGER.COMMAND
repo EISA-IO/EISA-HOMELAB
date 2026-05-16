@@ -373,6 +373,7 @@ main_menu() {
         say "   [4] List Stack            (show running containers + health)"
         say "   [5] LLM Manager           (pull, launch, delete Ollama models)"
         say "   [6] Edit Media Folders    (movies / tv / music / downloads / photos)"
+        say "   [7] Backup / Restore      (save or load images + volumes + state)"
         echo
         say "   [0] Exit"
         echo
@@ -385,6 +386,7 @@ main_menu() {
             4) do_list ;;
             5) ollama_boot ;;
             6) do_edit_media ;;
+            7) do_backup_menu ;;
             0) return 0 ;;
         esac
     done
@@ -437,6 +439,74 @@ do_edit_media() {
     echo "  recreates the affected containers so the new mounts take effect."
     echo "  ----------------------------------------------------------------"
     pwsh -NoProfile -File "${SETUP_PS1}" -EditMediaPaths
+    echo "  ----------------------------------------------------------------"
+    echo
+    pause_return
+}
+
+# ============================================================================
+# [7] BACKUP / RESTORE submenu
+# ============================================================================
+do_backup_menu() {
+    while true; do
+        clear
+        header "Backup / Restore"
+        say "   [1] Backup the stack now    (images + named volumes + state)"
+        say "   [2] Restore from a backup   (load images + volumes + state)"
+        echo
+        say "   [0] Back"
+        echo
+        local choice
+        read -r -p "  Select option: " choice
+        case "${choice}" in
+            1) do_backup ;;
+            2) do_restore ;;
+            0) return ;;
+        esac
+    done
+}
+
+do_backup() {
+    clear
+    header "Backup"
+    if ! ensure_pwsh; then pause_return; return; fi
+    if [ ! -f "${SETUP_PS1}" ]; then
+        err "  [X] setup.ps1 not found at ${SETUP_PS1}"
+        pause_return
+        return
+    fi
+    echo "  Dumps every Docker image + named volume + persistent-storage"
+    echo "  bind mount + .env into a portable folder you can move to USB"
+    echo "  or cloud sync. Will offer to stop the stack first for a clean"
+    echo "  snapshot. Can take a while — image tar is the heavy bit."
+    echo "  ----------------------------------------------------------------"
+    pwsh -NoProfile -File "${SETUP_PS1}" -Backup
+    echo "  ----------------------------------------------------------------"
+    echo
+    pause_return
+}
+
+do_restore() {
+    clear
+    header "Restore"
+    if ! ensure_pwsh; then pause_return; return; fi
+    if [ ! -f "${SETUP_PS1}" ]; then
+        err "  [X] setup.ps1 not found at ${SETUP_PS1}"
+        pause_return
+        return
+    fi
+    local rpath
+    read -r -p "  Path to backup folder (or leave blank to be prompted): " rpath
+    echo
+    echo "  Loads images, named volumes, persistent-storage, and .env from"
+    echo "  the backup folder, then brings the stack up. Will stop anything"
+    echo "  currently running first."
+    echo "  ----------------------------------------------------------------"
+    if [ -n "${rpath}" ]; then
+        pwsh -NoProfile -File "${SETUP_PS1}" -Restore -RestorePath "${rpath}"
+    else
+        pwsh -NoProfile -File "${SETUP_PS1}" -Restore
+    fi
     echo "  ----------------------------------------------------------------"
     echo
     pause_return

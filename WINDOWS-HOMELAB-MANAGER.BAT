@@ -63,6 +63,7 @@ echo   [3] Stop Stack            (compose down + cleanup)
 echo   [4] List Stack            (show running containers + health)
 echo   [5] LLM Manager           (pull, launch, delete Ollama models)
 echo   [6] Edit Media Folders    (movies / tv / music / downloads / photos)
+echo   [7] Backup / Restore      (save or load images + volumes + state)
 echo.
 echo   [0] Exit
 echo.
@@ -75,6 +76,7 @@ if "!choice!"=="3" goto :DO_STOP
 if "!choice!"=="4" goto :DO_LIST
 if "!choice!"=="5" goto :OLLAMA_BOOT
 if "!choice!"=="6" goto :DO_EDIT_MEDIA
+if "!choice!"=="7" goto :DO_BACKUP_MENU
 if "!choice!"=="0" goto :END
 goto :MAIN_MENU
 
@@ -178,6 +180,85 @@ echo.
 echo   Press any key to return to the main menu...
 pause >nul
 goto :MAIN_MENU
+
+
+:: =============================================================================
+:: [7] BACKUP / RESTORE submenu
+:: =============================================================================
+:DO_BACKUP_MENU
+cls
+echo.
+echo  ============================================================
+echo   EISA HOMELAB ULTIMATE - Backup / Restore
+echo  ============================================================
+echo.
+echo   [1] Backup the stack now    (images + named volumes + state)
+echo   [2] Restore from a backup   (load images + volumes + state)
+echo.
+echo   [0] Back
+echo.
+set "bchoice="
+set /p "bchoice=  Select option: "
+if "!bchoice!"=="1" goto :DO_BACKUP
+if "!bchoice!"=="2" goto :DO_RESTORE
+if "!bchoice!"=="0" goto :MAIN_MENU
+goto :DO_BACKUP_MENU
+
+:DO_BACKUP
+cls
+echo.
+echo  ============================================================
+echo   EISA HOMELAB ULTIMATE - Backup
+echo  ============================================================
+echo.
+if not exist "%SETUP_PS1%" (
+    echo   [X] Could not find setup.ps1 at %SETUP_PS1%
+    echo.
+    pause
+    goto :DO_BACKUP_MENU
+)
+echo   Dumps every Docker image + named volume + persistent-storage
+echo   bind mount + .env into a portable folder you can move to USB
+echo   or cloud sync. Will offer to stop the stack first for a clean
+echo   snapshot. Can take a while — image tar is the heavy bit.
+echo   ----------------------------------------------------------------
+%PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -Backup
+echo   ----------------------------------------------------------------
+echo.
+echo   Press any key to return to the backup menu...
+pause >nul
+goto :DO_BACKUP_MENU
+
+:DO_RESTORE
+cls
+echo.
+echo  ============================================================
+echo   EISA HOMELAB ULTIMATE - Restore
+echo  ============================================================
+echo.
+if not exist "%SETUP_PS1%" (
+    echo   [X] Could not find setup.ps1 at %SETUP_PS1%
+    echo.
+    pause
+    goto :DO_BACKUP_MENU
+)
+set "rpath="
+set /p "rpath=  Path to backup folder (or leave blank to be prompted): "
+echo.
+echo   Loads images, named volumes, persistent-storage, and .env from
+echo   the backup folder, then brings the stack up. Will stop anything
+echo   currently running first.
+echo   ----------------------------------------------------------------
+if defined rpath (
+    %PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -Restore -RestorePath "!rpath!"
+) else (
+    %PS% -NoProfile -ExecutionPolicy Bypass -File "%SETUP_PS1%" -Restore
+)
+echo   ----------------------------------------------------------------
+echo.
+echo   Press any key to return to the backup menu...
+pause >nul
+goto :DO_BACKUP_MENU
 
 
 :: =============================================================================

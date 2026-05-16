@@ -26,7 +26,11 @@ param(
     [switch]$Reconfigure,    # force re-asking every value even if .env has it
     [switch]$NoStart,        # render configs but don't `docker compose up`
     [switch]$StartOnly,      # skip wizard entirely; just bring the existing stack up
-    [switch]$EditMediaPaths  # standalone editor for MOVIES_PATH / TV_SHOWS_PATH / MUSIC_PATH / DOWNLOADS_PATH / PHOTOS_PATH
+    [switch]$EditMediaPaths, # standalone editor for MOVIES_PATH / TV_SHOWS_PATH / MUSIC_PATH / DOWNLOADS_PATH / PHOTOS_PATH
+    [switch]$Backup,         # save images + named volumes + persistent-storage + .env to a portable folder
+    [string]$BackupPath,     # destination folder for -Backup (default: <repoRoot>\backups\eisa-homelab-backup-<timestamp>)
+    [switch]$Restore,        # load images + volumes + persistent-storage from a backup folder, then start
+    [string]$RestorePath     # source folder for -Restore (prompted if not supplied)
 )
 
 # ---------------------------------------------------------------------------
@@ -858,9 +862,336 @@ function Invoke-EditMediaPaths {
 }
 
 # ---------------------------------------------------------------------------
+# Backup + restore. The unit of backup is a SELF-CONTAINED FOLDER on disk,
+# not a single archive — easier to inspect, easier to drop on a USB drive,
+# and the user can delete pieces (e.g. drop images.tar to save space and
+# re-pull from registries on restore).
+#
+# Layout of a backup folder:
+#   <root>/
+#     images.tar               (docker save of every stack image)
+#     volumes/<name>.tar.gz    (one per docker named volume)
+#     persistent-storage.tar.gz (files/persistent-storage/, the bind mounts)
+#     .env                     (secrets, paths, API keys)
+#     .wizard-state.json       (profile choices, GPU mode)
+#     MANIFEST.txt             (timestamp, host, list of contents)
+#
+# All archive ops run inside a throw-away `alpine` container so the format
+# is identical on Windows/macOS/Linux without depending on host tar.exe.
+# ---------------------------------------------------------------------------
+
+# Resolve docker-compose with EVERY known profile active so the output
+# includes services + named volumes from all of them. `docker compose
+# config` filters by active profile otherwise — and "no profile" matches
+# only the always-on core, missing 90% of the stack.
+function Get-FullComposeConfig {
+    Push-Location $ProjectRoot
+    try {
+        $args = @('compose')
+        foreach ($p in @('ai','media','media-stream','media-request','productivity','tunnel')) {
+            $args += @('--profile', $p)
+        }
+        $args += @('config','--format','json')
+        $cfgJson = & docker @args 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $cfgJson) { return $null }
+        return $cfgJson | ConvertFrom-Json
+    } finally {
+        Pop-Location
+    }
+}
+
+# List every image referenced by docker-compose.yml that is actually
+# pulled locally. Returns @() if compose config fails (e.g. no .env).
+function Get-StackImages {
+    $cfg = Get-FullComposeConfig
+    if (-not $cfg) { return @() }
+    $declared = @()
+    foreach ($s in $cfg.services.PSObject.Properties) {
+        if ($s.Value.image) { $declared += $s.Value.image }
+    }
+    $declared = $declared | Sort-Object -Unique
+
+    $local = @{}
+    & docker image ls --format '{{.Repository}}:{{.Tag}}' 2>$null | ForEach-Object {
+        if ($_) { $local[$_] = $true }
+    }
+    return @($declared | Where-Object { $local.ContainsKey($_) })
+}
+
+# Compose-prefixed name of every named volume declared in docker-compose.yml
+# that actually exists on the daemon.
+function Get-StackVolumes {
+    $cfg = Get-FullComposeConfig
+    if (-not $cfg) { return @() }
+    $names = @()
+    if ($cfg.volumes) {
+        foreach ($v in $cfg.volumes.PSObject.Properties) { $names += $v.Name }
+    }
+    $project = $cfg.name
+    if (-not $project) { $project = (Split-Path $ProjectRoot -Leaf).ToLower() -replace '[^a-z0-9_-]','' }
+
+    $existing = @{}
+    & docker volume ls --format '{{.Name}}' 2>$null | ForEach-Object {
+        if ($_) { $existing[$_] = $true }
+    }
+    return @($names | ForEach-Object {
+        $full = "${project}_$_"
+        if ($existing.ContainsKey($full)) { $full }
+    })
+}
+
+function Invoke-BackupStack {
+    $repoRoot = Split-Path $ProjectRoot -Parent
+    if (-not $BackupPath) {
+        $stamp     = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $BackupPath = Join-Path $repoRoot "backups/eisa-homelab-backup-$stamp"
+    }
+
+    Step 'Backup EISA Homelab' "Destination: $BackupPath"
+    Dim '  This dumps every Docker image, every named volume, and the persistent-storage bind mount into one portable folder. Recommend stopping the stack first so volume snapshots are consistent.'
+    G  ''
+
+    # Warn-and-confirm if the stack is running.
+    $running = @()
+    & docker ps --format '{{.Names}}' 2>$null | ForEach-Object { if ($_) { $running += $_ } }
+    if ($running.Count -gt 0) {
+        Dim "  Stack appears to be running ($($running.Count) container(s)). Volumes backed up while postgres / sqlite are writing can be inconsistent."
+        if (Ask-YesNo '  Stop the stack now for a clean backup? (recommended)' $true) {
+            Push-Location $ProjectRoot
+            try {
+                & docker compose --progress plain down -t 10
+            } finally { Pop-Location }
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $BackupPath | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $BackupPath 'volumes') | Out-Null
+
+    # 1) Save images.
+    $imgs = Get-StackImages
+    if ($imgs.Count -eq 0) {
+        Dim '  No locally-pulled stack images found — skipping image save.'
+    } else {
+        Ok "Saving $($imgs.Count) image(s) to images.tar — this is the big one, can take a few minutes."
+        $imagesTar = Join-Path $BackupPath 'images.tar'
+        & docker save -o $imagesTar @imgs
+        if ($LASTEXITCODE -ne 0) {
+            Err "docker save failed (exit $LASTEXITCODE)."
+        } else {
+            $size = [math]::Round((Get-Item $imagesTar).Length / 1GB, 2)
+            Ok "images.tar written ($size GB)."
+        }
+    }
+
+    # 2) Save named volumes via an alpine helper container.
+    $vols = Get-StackVolumes
+    if ($vols.Count -eq 0) {
+        Dim '  No named volumes found — nothing to back up.'
+    } else {
+        Ok "Archiving $($vols.Count) named volume(s) via alpine tar..."
+        $volBackupDir = (Resolve-Path (Join-Path $BackupPath 'volumes')).Path
+        foreach ($v in $vols) {
+            $short = ($v -replace '^[^_]+_','')
+            Dim "    -> $v"
+            & docker run --rm `
+                -v "${v}:/source:ro" `
+                -v "${volBackupDir}:/backup" `
+                alpine sh -c "tar czf /backup/${short}.tar.gz -C /source ." 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Err "    tar failed for volume $v"
+            }
+        }
+        Ok 'Volumes archived.'
+    }
+
+    # 3) Tar persistent-storage via alpine (the project lives at $ProjectRoot
+    #    which is files/, persistent-storage is at $ProjectRoot/persistent-storage).
+    $psSrc = Join-Path $ProjectRoot 'persistent-storage'
+    if (Test-Path $psSrc) {
+        Ok 'Archiving persistent-storage (configs, postgres data, *arr state)...'
+        $psBackup = (Resolve-Path $BackupPath).Path
+        $psSrcAbs = (Resolve-Path $psSrc).Path
+        & docker run --rm `
+            -v "${psSrcAbs}:/source:ro" `
+            -v "${psBackup}:/backup" `
+            alpine sh -c 'tar czf /backup/persistent-storage.tar.gz -C /source .' 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Err '  persistent-storage tar failed.'
+        } else {
+            Ok 'persistent-storage.tar.gz written.'
+        }
+    } else {
+        Dim '  No persistent-storage folder yet — skipping.'
+    }
+
+    # 4) Copy .env + .wizard-state.json.
+    if (Test-Path $EnvFile)   { Copy-Item $EnvFile   (Join-Path $BackupPath '.env')              -Force }
+    if (Test-Path $StateFile) { Copy-Item $StateFile (Join-Path $BackupPath '.wizard-state.json') -Force }
+
+    # 5) Manifest.
+    $manifest = @(
+        "EISA Homelab backup"
+        "Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')"
+        "Host:    $env:COMPUTERNAME$([Environment]::MachineName)"
+        "Project: $ProjectRoot"
+        ""
+        "Images saved: $($imgs.Count)"
+        ($imgs | ForEach-Object { "  $_" })
+        ""
+        "Volumes saved: $($vols.Count)"
+        ($vols | ForEach-Object { "  $_" })
+        ""
+        "Also bundled: persistent-storage.tar.gz, .env, .wizard-state.json"
+    ) -join "`n"
+    Set-Content -Path (Join-Path $BackupPath 'MANIFEST.txt') -Value $manifest -Encoding UTF8
+
+    G ''
+    Ok "Backup complete: $BackupPath"
+    Dim '  Copy this folder to any drive/USB/cloud sync. To restore on another machine:'
+    Dim '    1. clone this repo there'
+    Dim '    2. run the manager -> [7] Backup / Restore -> [2] Restore from a backup folder'
+}
+
+function Invoke-RestoreStack {
+    $path = $RestorePath
+    if (-not $path) {
+        Step 'Restore EISA Homelab from a backup folder' ''
+        $path = Ask 'Path to the backup folder' '' -AllowEmpty
+    }
+    if (-not $path) {
+        Err 'No path provided — aborting.'
+        return $false
+    }
+    if (-not (Test-Path $path)) {
+        Err "Folder not found: $path"
+        return $false
+    }
+    $path = (Resolve-Path $path).Path
+
+    $manifest = Join-Path $path 'MANIFEST.txt'
+    if (-not (Test-Path $manifest)) {
+        Err "Not an EISA Homelab backup folder (missing MANIFEST.txt): $path"
+        return $false
+    }
+
+    Step 'Restoring from backup' $path
+    Dim '  This will replace your current docker images, named volumes, persistent-storage folder, and .env. Stopping the stack first.'
+    if (-not (Ask-YesNo '  Proceed?' $true)) { return $false }
+
+    Push-Location $ProjectRoot
+    try {
+        & docker compose --progress plain down -t 10 2>$null
+    } finally { Pop-Location }
+
+    # 1) Load images.
+    $imagesTar = Join-Path $path 'images.tar'
+    if (Test-Path $imagesTar) {
+        Ok 'Loading images via docker load — this is the long step.'
+        & docker load -i $imagesTar
+        if ($LASTEXITCODE -ne 0) { Err 'docker load failed.' } else { Ok 'Images loaded.' }
+    } else {
+        Dim '  images.tar not in backup — images will be pulled from registries when the stack starts.'
+    }
+
+    # 2) Restore named volumes.
+    $volDir = Join-Path $path 'volumes'
+    if (Test-Path $volDir) {
+        # Figure out the project name so we re-create volumes with the
+        # right prefix.
+        Push-Location $ProjectRoot
+        try {
+            $cfgJson = & docker compose config --format json 2>$null
+            $cfg = if ($cfgJson) { $cfgJson | ConvertFrom-Json } else { $null }
+        } finally { Pop-Location }
+        $project = if ($cfg -and $cfg.name) { $cfg.name } else { (Split-Path $ProjectRoot -Leaf).ToLower() -replace '[^a-z0-9_-]','' }
+
+        $tarsAbs = (Resolve-Path $volDir).Path
+        Get-ChildItem $volDir -Filter '*.tar.gz' -ErrorAction SilentlyContinue | ForEach-Object {
+            $short = $_.BaseName -replace '\.tar$',''
+            $full  = "${project}_$short"
+            Dim "    <- $full"
+            & docker volume create $full 2>$null | Out-Null
+            & docker run --rm `
+                -v "${full}:/target" `
+                -v "${tarsAbs}:/backup:ro" `
+                alpine sh -c "cd /target && tar xzf /backup/$($_.Name)" 2>$null
+            if ($LASTEXITCODE -ne 0) { Err "    restore failed for $full" }
+        }
+        Ok 'Volumes restored.'
+    } else {
+        Dim '  No volumes/ in backup — skipping named-volume restore.'
+    }
+
+    # 3) Restore persistent-storage.
+    $psTar = Join-Path $path 'persistent-storage.tar.gz'
+    if (Test-Path $psTar) {
+        $psDest = Join-Path $ProjectRoot 'persistent-storage'
+        New-Item -ItemType Directory -Force -Path $psDest | Out-Null
+        $psDestAbs = (Resolve-Path $psDest).Path
+        $psTarAbs  = (Resolve-Path $psTar).Path
+        # Copy the tar.gz into a temp container-visible dir, then unpack
+        # into the bind-mounted target. We bind the .tar.gz's parent dir
+        # read-only.
+        $tarDirAbs = Split-Path $psTarAbs -Parent
+        & docker run --rm `
+            -v "${psDestAbs}:/target" `
+            -v "${tarDirAbs}:/backup:ro" `
+            alpine sh -c 'cd /target && tar xzf /backup/persistent-storage.tar.gz' 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Err '  persistent-storage extract failed.'
+        } else {
+            Ok 'persistent-storage restored.'
+        }
+    } else {
+        Dim '  No persistent-storage.tar.gz in backup — keeping current contents (if any).'
+    }
+
+    # 4) Restore .env + .wizard-state.json.
+    $bkEnv   = Join-Path $path '.env'
+    $bkState = Join-Path $path '.wizard-state.json'
+    if (Test-Path $bkEnv)   { Copy-Item $bkEnv   $EnvFile   -Force; Ok '.env restored.' }
+    if (Test-Path $bkState) { Copy-Item $bkState $StateFile -Force; Ok '.wizard-state.json restored.' }
+
+    G ''
+    Ok 'Restore complete. The stack will come up with the images, volumes, and settings from the backup.'
+    return $true
+}
+
+# ---------------------------------------------------------------------------
 # The first-run wizard.
 # ---------------------------------------------------------------------------
 function Invoke-Wizard {
+    # ---- Step 0: restore from a backup? -----------------------------------
+    # Offered on every wizard run, but only useful if the user actually
+    # has a backup folder somewhere on disk. Default = start fresh.
+    Step 'Step 0 — Restore from a previous backup?' 'If you already have an EISA Homelab backup folder on this disk (created via the manager menu Backup option, typically copied over from another machine), the wizard can load images + volumes from it instead of pulling everything online and starting fresh.'
+    $restoreChoice = Ask-Choice @(
+        [pscustomobject]@{
+            Label = 'Start fresh — pull images from the internet (recommended)'
+            Hint  = @(
+                'Normal first-run flow. The wizard will ask questions and bring',
+                'up a clean stack, pulling every container image from its registry.'
+            )
+        }
+        [pscustomobject]@{
+            Label = 'Restore from a backup folder'
+            Hint  = @(
+                'Skip the rest of the wizard, load saved images + volumes +',
+                'persistent-storage from a folder on this machine, and bring',
+                'the stack up exactly like it was on the source machine.'
+            )
+        }
+    )
+    if ($restoreChoice -eq 2) {
+        if (Invoke-RestoreStack) {
+            # Surface a tiny result shape so the main flow knows to skip
+            # the rest (stack-up + LLM pulls + media wiring) — restore
+            # already wrote the env + state and we just need to start.
+            return [pscustomobject]@{ Restored = $true }
+        }
+        Dim '  Restore failed or was aborted — falling through to a clean install.'
+    }
+
     # Bootstrap .env from .env.example if missing.
     if (-not (Test-Path $EnvFile)) {
         Copy-Item $EnvExample $EnvFile
@@ -3281,6 +3612,36 @@ if ($EditMediaPaths) {
 }
 
 # -----------------------------------------------------------------------------
+# Branch -1: -Backup — manager menu's "Backup the stack now". Dumps images +
+# volumes + persistent-storage into a portable folder and exits.
+# -----------------------------------------------------------------------------
+if ($Backup) {
+    Invoke-BackupStack
+    exit 0
+}
+
+# -----------------------------------------------------------------------------
+# Branch -2: -Restore — manager menu's "Restore from a backup folder".
+# Loads images + volumes + persistent-storage from a folder and starts.
+# -----------------------------------------------------------------------------
+if ($Restore) {
+    if (Invoke-RestoreStack) {
+        # After a successful restore, bring the stack up using whatever state
+        # the backup carried.
+        $envMap = Read-EnvFile $EnvFile
+        $state  = Read-State
+        Render-Templates -Env $envMap -StateBlob $state
+        $profiles  = if ($state -and $state.profiles)      { @($state.profiles) }      else { @('ai','media') }
+        $useTunnel = if ($state -and $state.useTunnel)     { [bool]$state.useTunnel }  else { $false }
+        $gpuMode   = if ($state -and $state.gpuMode)       { [string]$state.gpuMode }  else { 'cpu' }
+        $custom    = if ($state -and $state.customServices){ @($state.customServices) }else { @() }
+        Ensure-NativeOllamaInstalled -GpuMode $gpuMode
+        Start-Stack -Profiles $profiles -UseTunnel $useTunnel -GpuMode $gpuMode -CustomServices $custom
+    }
+    exit 0
+}
+
+# -----------------------------------------------------------------------------
 # Branch A: -StartOnly — invoked by the HOMELAB-MANAGER launchers when the
 # user picks [2] Start Stack.
 # SELF-HEALING. Every step that the first-run wizard does (without the
@@ -3408,6 +3769,24 @@ if ($StartOnly) {
 # when the user picks [1] First-Run Setup.
 # -----------------------------------------------------------------------------
 $result = Invoke-Wizard
+
+# Step 0 may have short-circuited the wizard with a successful restore.
+# Re-read .env + state from the restored files, render templates, and
+# go straight to compose-up — no question loop, no secret regeneration.
+if ($result -and $result.PSObject.Properties['Restored'] -and $result.Restored) {
+    $envMap   = Read-EnvFile $EnvFile
+    $state    = Read-State
+    Render-Templates -Env $envMap -StateBlob $state
+    if (-not $NoStart) {
+        $profiles  = if ($state -and $state.profiles)      { @($state.profiles) }      else { @('ai','media') }
+        $useTunnel = if ($state -and $state.useTunnel)     { [bool]$state.useTunnel }  else { $false }
+        $gpuMode   = if ($state -and $state.gpuMode)       { [string]$state.gpuMode }  else { 'cpu' }
+        $custom    = if ($state -and $state.customServices){ @($state.customServices) }else { @() }
+        Ensure-NativeOllamaInstalled -GpuMode $gpuMode
+        Start-Stack -Profiles $profiles -UseTunnel $useTunnel -GpuMode $gpuMode -CustomServices $custom
+    }
+    exit 0
+}
 
 # Load/extend the state blob and persist secrets + choices.
 $stateBlob = if ($state) { $state } else {
