@@ -3286,23 +3286,57 @@ function Start-Stack {
                     $content = $sr.ReadToEnd()
                     $sr.Close()
                 } finally { $fs.Close() }
-                $totalLayers = ([regex]::Matches($content, 'Pulling fs layer')).Count
-                $doneLayers  = ([regex]::Matches($content, 'Pull complete')).Count
-                $downloaded  = ([regex]::Matches($content, 'Download complete')).Count
-                # Last non-empty line — gives the most recent docker action
-                # (e.g. "fff4e2c1: Download complete").
+                # Each layer in an image goes through one of two paths:
+                #   (a) already in local cache  ->  "Already exists"   (1 line)
+                #   (b) needs fetching          ->  "Pulling fs layer"
+                #                                   "Download complete"
+                #                                   "Pull complete"    (terminal)
+                # Total layers = a + b. Done layers = a + ("Pull complete"
+                # count). Including "Already exists" in BOTH counters fixes
+                # the previous bug where a fully-cached image showed 0/14
+                # forever because no "Pulling fs layer" was emitted.
+                $alreadyExists = ([regex]::Matches($content, 'Already exists')).Count
+                $pullingLayers = ([regex]::Matches($content, 'Pulling fs layer')).Count
+                $pullComplete  = ([regex]::Matches($content, 'Pull complete')).Count
+                $downloaded    = ([regex]::Matches($content, 'Download complete')).Count
                 $lines = $content -split "[\r\n]+" | Where-Object { $_ -match '\S' }
                 $last  = if ($lines.Count -gt 0) { $lines[-1] } else { 'starting' }
-                # Drop the layer-hash prefix so the per-image line is compact.
-                $last = $last -replace '^[0-9a-f]{8,}\s*:\s*', ''
+                $last  = $last -replace '^[0-9a-f]{8,}\s*:\s*', ''
                 return [pscustomobject]@{
-                    Total      = $totalLayers
-                    Done       = $doneLayers
-                    Downloaded = $downloaded
+                    Total      = $alreadyExists + $pullingLayers
+                    Done       = $alreadyExists + $pullComplete
+                    Downloaded = $alreadyExists + $downloaded
                     Last       = $last
                 }
             } catch { return $null }
         }
+
+        # Aggregate bytes-on-disk metric so we have a registry-independent
+        # signal of forward motion even when a registry is throttling and
+        # no per-image state changes are happening for minutes. Sums the
+        # human-readable sizes returned by `docker images --format`. The
+        # absolute total counts shared layers per-image (overcounted), but
+        # the DELTA between heartbeats is what matters and that's reliable.
+        function Get-TotalImageMB {
+            $total = 0.0
+            & docker images --format '{{.Size}}' 2>$null | ForEach-Object {
+                if ($_ -match '^(\d+(?:\.\d+)?)\s*([KMGT]?B)$') {
+                    $n = [double]$Matches[1]; $u = $Matches[2]
+                    $mb = switch ($u) {
+                        'B'  { $n / 1MB }
+                        'KB' { $n / 1024.0 }
+                        'MB' { $n }
+                        'GB' { $n * 1024.0 }
+                        'TB' { $n * 1024.0 * 1024.0 }
+                        default { 0 }
+                    }
+                    $total += $mb
+                }
+            }
+            return [math]::Round($total, 0)
+        }
+        $baselineMB = Get-TotalImageMB
+        $lastTickMB = $baselineMB
 
         # Fill the pool with the first poolSize images.
         while ($queue.Count -gt 0 -and $inFlight.Count -lt $poolSize) {
@@ -3359,8 +3393,15 @@ function Start-Stack {
                 $elapsed = if ($secs -ge 60) {
                     '{0}m{1:00}s' -f ([math]::Floor($secs/60)), ($secs % 60)
                 } else { "${secs}s" }
-                $tail = if ($queue.Count -gt 0) { "  ($($queue.Count) queued)" } else { '' }
-                Write-Host ("    [{0,6}] {1} downloading:{2}" -f $elapsed, $inFlight.Count, $tail) -ForegroundColor DarkGreen
+                $nowMB   = Get-TotalImageMB
+                $delta   = [int]($nowMB - $lastTickMB)
+                $totalDl = [int]($nowMB - $baselineMB)
+                $lastTickMB = $nowMB
+                $deltaStr = if ($delta -gt 0) { "+${delta}MB this tick" }
+                            elseif ($totalDl -gt 0) { "no new bytes" }
+                            else { 'verifying manifests...' }
+                $queued = if ($queue.Count -gt 0) { "  ($($queue.Count) queued)" } else { '' }
+                Write-Host ("    [{0,6}] {1} downloading — {2}, total +{3}MB{4}" -f $elapsed, $inFlight.Count, $deltaStr, $totalDl, $queued) -ForegroundColor DarkGreen
                 foreach ($img in $inFlight.Keys) {
                     $shortName = ($img -split '/')[-1]
                     if ($shortName.Length -gt 36) { $shortName = $shortName.Substring(0,33) + '...' }
@@ -3368,7 +3409,6 @@ function Start-Stack {
                     if (-not $state -or $state.Total -eq 0) {
                         $line = 'starting...'
                     } else {
-                        # last action, truncated to keep the row compact
                         $last = $state.Last
                         if ($last.Length -gt 32) { $last = $last.Substring(0,29) + '...' }
                         $line = '[{0,2}/{1,2} layers, {2} d/l] {3}' -f $state.Done, $state.Total, $state.Downloaded, $last
